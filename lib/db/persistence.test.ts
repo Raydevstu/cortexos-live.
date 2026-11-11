@@ -275,6 +275,117 @@ test("4. PATCH /api/artifacts/[id] enforces status=approved requires approved_by
   assert.equal(updated.approved_by, "Ray (Founder)");
 });
 
+test("5. Transactional outbox invariant: every source has a source_created event and transaction failure rolls back both", async () => {
+  const { query, dbTransaction } = await import("./client.ts");
+
+  // Verify that all sources currently in the database have a corresponding source_created event
+  const sourcesRes = await query<{ count: string }>("SELECT count(*)::text AS count FROM sources");
+  const eventsRes = await query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM events WHERE event_type = 'source_created'"
+  );
+  const sourceCount = parseInt(sourcesRes.rows[0].count, 10);
+  const eventCount = parseInt(eventsRes.rows[0].count, 10);
+  assert.ok(sourceCount >= 4, `Expected at least 4 sources, found ${sourceCount}`);
+  assert.ok(
+    eventCount >= sourceCount,
+    `Outbox gap detected! Expected >= ${sourceCount} source_created events, but only found ${eventCount}`
+  );
+
+  // Verify transaction atomicity: simulating a failure inside the transaction rolls back both source and event
+  const testId = "00000000-0000-0000-0000-000000009999";
+  let transactionFailed = false;
+  try {
+    await dbTransaction(async (tx) => {
+      await tx.query(
+        "INSERT INTO brain_objects (id, object_type) VALUES ($1, 'source') ON CONFLICT DO NOTHING",
+        [testId]
+      );
+      await tx.query(
+        `INSERT INTO sources (id, kind, title, storage_path, content_hash, raw_content, mime_type, byte_size, trust, ingest_status)
+         VALUES ($1, 'markdown'::source_kind, 'Rollback Test', 'brain/raw/test.md', 'dummyhash123', 'content', 'text/markdown', 7, 'untrusted'::trust_level, 'received'::ingest_status)`,
+        [testId]
+      );
+      await tx.query(
+        `INSERT INTO events (event_type, aggregate_type, aggregate_id, payload, idempotency_key, status)
+         VALUES ('source_created', 'source', $1, '{"test": true}'::jsonb, 'source_created:rollback-test', 'pending'::event_status)`,
+        [testId]
+      );
+      // Intentionally throw to trigger rollback
+      throw new Error("Simulated failure inside transaction");
+    });
+  } catch {
+    transactionFailed = true;
+  }
+  assert.ok(transactionFailed, "Transaction must fail and catch error");
+
+  // Verify neither source nor event was committed
+  const checkSrc = await query("SELECT id FROM sources WHERE id = $1", [testId]);
+  assert.equal(checkSrc.rows.length, 0, "Source row must be rolled back on transaction error");
+  const checkEv = await query("SELECT id FROM events WHERE idempotency_key = 'source_created:rollback-test'");
+  assert.equal(checkEv.rows.length, 0, "Outbox event must be rolled back on transaction error");
+});
+
+test("6. POST /api/admin/requeue route is guarded by OWNER_KEY and calls requeue_stale_events()", async () => {
+  const { NextRequest } = await import("next/server.js");
+  const { POST: postRequeue } = await import("../../app/api/admin/requeue/route.ts");
+  const ownerKey = process.env.OWNER_KEY || "cortex-owner-key-v1";
+
+  // Unauthenticated -> 401
+  const reqUnauth = new NextRequest("http://localhost:3000/api/admin/requeue", {
+    method: "POST",
+  });
+  const resUnauth = await postRequeue(reqUnauth);
+  assert.equal(resUnauth.status, 401);
+
+  // Authenticated -> 200 and calls requeue_stale_events()
+  const reqAuth = new NextRequest("http://localhost:3000/api/admin/requeue", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-owner-key": ownerKey,
+    },
+    body: JSON.stringify({ older_than: "1 second" }),
+  });
+  const resAuth = await postRequeue(reqAuth);
+  assert.equal(resAuth.status, 200);
+  const data = await resAuth.json();
+  assert.equal(data.ok, true);
+  assert.equal(typeof data.requeued_count, "number");
+});
+
+test("7. GET /api/search executes hybrid search querying embeddings + sources + wiki_pages and returns source citations", async () => {
+  const { NextRequest } = await import("next/server.js");
+  const { GET: getSearch } = await import("../../app/api/search/route.ts");
+
+  const req = new NextRequest("http://localhost:3000/api/search?q=Karpathy");
+  const res = await getSearch(req);
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.ok(Array.isArray(data.results));
+  assert.ok(data.results.length > 0, "Expected search results for 'Karpathy'");
+  const topResult = data.results[0];
+  assert.ok(topResult.title);
+  assert.ok(topResult.source_id, "Each search result must return source_id citation");
+  assert.ok(typeof topResult.rrf_score === "number", "Result must contain RRF score");
+  assert.ok(Array.isArray(topResult.citations), "Result must contain citations array");
+});
+
+test("8. GET /api/graph/project/[id] returns real Postgres nodes and relationships", async () => {
+  const { NextRequest } = await import("next/server.js");
+  const { GET: getProjectGraph } = await import("../../app/api/graph/project/[id]/route.ts");
+
+  const req = new NextRequest("http://localhost:3000/api/graph/project/proj-solar-crm");
+  const res = await getProjectGraph(req, {
+    params: Promise.resolve({ id: "proj-solar-crm" }),
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.ok(Array.isArray(data.nodes), "Project graph must return nodes array");
+  assert.ok(data.nodes.length > 0, "Expected nodes in project graph");
+  assert.ok(Array.isArray(data.relationships), "Project graph must return relationships array");
+  assert.ok(Array.isArray(data.edges), "Project graph must return edges array");
+});
+
 test.after(async () => {
   if (global.__cortexPglite) {
     await global.__cortexPglite.close();

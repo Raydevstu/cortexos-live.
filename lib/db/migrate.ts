@@ -162,6 +162,22 @@ CREATE OPERATOR <=> (LEFTARG = real[], RIGHTARG = real[], PROCEDURE = vector_cos
       `);
       await seedInitialCortexData(exec);
     }
+
+    // Transactional outbox invariant: ensure every source in the DB has a corresponding source_created event
+    await exec.query(`
+      INSERT INTO events (event_type, aggregate_type, aggregate_id, payload, idempotency_key, status, processed_at)
+      SELECT 'source_created', 'source', s.id,
+             jsonb_build_object('title', s.title, 'kind', s.kind::text, 'trust', s.trust::text, 'content_hash', s.content_hash),
+             'source_created:' || s.id::text,
+             'done'::event_status,
+             s.ingested_at
+        FROM sources s
+       WHERE NOT EXISTS (
+         SELECT 1 FROM events e WHERE e.event_type = 'source_created' AND e.aggregate_id = s.id
+       )
+      ON CONFLICT (idempotency_key) DO NOTHING;
+    `);
+
     console.log(
       "[CortexOS DB] brain_objects table exists — boot migration check complete."
     );
@@ -334,6 +350,22 @@ async function seedInitialCortexData(exec: {
         s.trust,
         s.ingest_status,
         JSON.stringify({ ...s.metadata, legacy_id: s.id }),
+      ]
+    );
+
+    await exec.query(
+      `INSERT INTO events (event_type, aggregate_type, aggregate_id, payload, idempotency_key, status, attempts, max_attempts, processed_at)
+       VALUES ('source_created', 'source', $1, $2::jsonb, $3, 'done'::event_status, 1, 5, now())
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [
+        sid,
+        JSON.stringify({
+          title: s.title,
+          kind: s.kind,
+          trust: s.trust,
+          content_hash: s.content_hash,
+        }),
+        `source_created:${sid}`,
       ]
     );
   }

@@ -44,6 +44,7 @@ interface Brain3DProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   customNodes?: BrainNode[];
+  projectId?: string;
 }
 
 export default function Brain3D({
@@ -52,6 +53,7 @@ export default function Brain3D({
   searchQuery,
   onSearchChange,
   customNodes = [],
+  projectId = "proj-solar-crm",
 }: Brain3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dbGraph, setDbGraph] = useState<{
@@ -61,16 +63,25 @@ export default function Brain3D({
 
   useEffect(() => {
     let active = true;
-    fetch("/api/graph/all?depth=2")
-      .then((res) => res.json())
+    const projectTarget = projectId || "proj-solar-crm";
+    fetch(`/api/graph/project/${encodeURIComponent(projectTarget)}?depth=2`)
+      .then((res) => {
+        if (!res.ok) {
+          return fetch("/api/graph/all?depth=2").then((r) => r.json());
+        }
+        return res.json();
+      })
       .then((data) => {
         if (!active || !Array.isArray(data.nodes)) return;
-        const edges: [string, string][] = Array.isArray(data.relationships)
-          ? data.relationships.map(
-              (r: { from_id: string; to_id: string }) =>
-                [r.from_id, r.to_id] as [string, string]
-            )
-          : [];
+        const edges: [string, string][] =
+          Array.isArray(data.edges) && data.edges.length > 0
+            ? data.edges
+            : Array.isArray(data.relationships)
+            ? data.relationships.map(
+                (r: { from_id: string; to_id: string }) =>
+                  [r.from_id, r.to_id] as [string, string]
+              )
+            : [];
         setDbGraph(computeBrainNodeLayouts(data.nodes, edges));
       })
       .catch(() => {
@@ -79,7 +90,7 @@ export default function Brain3D({
     return () => {
       active = false;
     };
-  }, [customNodes.length]);
+  }, [projectId, customNodes.length]);
 
   const graphData = useMemo(() => {
     if (!customNodes || customNodes.length === 0) return dbGraph;

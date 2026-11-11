@@ -182,6 +182,28 @@ export default function WarRoom({
 
   // Left Panel (Research & Sources) State
   const [sourceSearch, setSourceSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    Array<{
+      object_id: string;
+      object_type: string;
+      chunk_index?: number;
+      source_id: string;
+      title: string;
+      snippet: string;
+      fts_rank: number | null;
+      vec_rank: number | null;
+      cosine_similarity: number;
+      rrf_score: number;
+      citations: Array<{
+        source_id: string;
+        claim_text: string;
+        locator: string | null;
+        title?: string;
+        storage_path?: string;
+      }>;
+    }> | null
+  >(null);
+  const [isSearching, setIsSearching] = useState(false);
   const [trustFilter, setTrustFilter] = useState<"all" | TrustLevel>("all");
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>("src-karpathy-wiki");
   const [isAddingSource, setIsAddingSource] = useState(false);
@@ -286,6 +308,37 @@ export default function WarRoom({
       active = false;
     };
   }, [neighborRootId, relationships.length]);
+
+  // Wire War Room search box to GET /api/search (Hybrid: pgvector cosine + sources/wiki_pages FTS)
+  useEffect(() => {
+    const q = sourceSearch.trim();
+    if (!q) {
+      const handle = setTimeout(() => {
+        setSearchResults(null);
+        setIsSearching(false);
+      }, 0);
+      return () => clearTimeout(handle);
+    }
+
+    const timer = setTimeout(() => {
+      setIsSearching(true);
+      fetch(`/api/search?q=${encodeURIComponent(q)}&limit=15`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && Array.isArray(data.results)) {
+            setSearchResults(data.results);
+          }
+        })
+        .catch(() => {
+          // Keep current results
+        })
+        .finally(() => {
+          setIsSearching(false);
+        });
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [sourceSearch]);
 
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) || projects[0],
@@ -1249,40 +1302,108 @@ export default function WarRoom({
             </form>
           )}
 
-          {/* Sources List (Vertical Stack) */}
+          {/* Sources List (Vertical Stack) or Real Hybrid Search Results */}
           <div className="flex-1 overflow-y-auto divide-y divide-[#e4e6eb]/10 [scrollbar-width:thin] [scrollbar-color:rgba(228,230,235,0.2)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#e4e6eb]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#00ffa3]/60">
-            {filteredSources.map((src) => {
-              const isSelected = selectedSource?.id === src.id;
-              return (
-                <button
-                  key={src.id}
-                  type="button"
-                  onClick={() => setSelectedSourceId(src.id)}
-                  className={`block w-full text-left px-5 py-3 transition-colors ${
-                    isSelected
-                      ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
-                      : "hover:bg-white/[0.03]"
-                  }`}
-                >
-                  <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
-                    {src.title}
+            {sourceSearch.trim() && searchResults !== null ? (
+              <div>
+                <div className="px-5 py-2.5 bg-[#003322]/40 border-b border-[#00ffa3]/20 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-[#00ffa3]">
+                  <span>
+                    {isSearching ? "Searching..." : `Search · ${searchResults.length} Results`}
+                  </span>
+                  <span>RRF + Vector + FTS</span>
+                </div>
+                {searchResults.length === 0 ? (
+                  <div className="p-5 text-center text-xs font-mono text-[#e4e6eb]/50">
+                    No hybrid search matches for &quot;{sourceSearch}&quot;
                   </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
-                    <span
-                      className={
-                        src.trust === "trusted" ? "text-[#00ffa3]" : "text-amber-400"
-                      }
-                    >
-                      {src.trust}
-                    </span>
-                    <span aria-hidden="true">·</span>
-                    <span>{src.kind}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{src.content_hash.slice(0, 8)}</span>
-                  </div>
-                </button>
-              );
-            })}
+                ) : (
+                  searchResults.map((hit, idx) => {
+                    const isSelected =
+                      selectedSource?.id === hit.source_id ||
+                      selectedSource?.id === hit.object_id;
+                    return (
+                      <button
+                        key={`${hit.object_id}-${hit.chunk_index ?? idx}`}
+                        type="button"
+                        onClick={() => {
+                          const targetSrc =
+                            sources.find((s) => s.id === hit.source_id) ||
+                            sources.find((s) => s.id === hit.object_id);
+                          if (targetSrc) {
+                            setSelectedSourceId(targetSrc.id);
+                          }
+                        }}
+                        className={`block w-full text-left px-5 py-3 transition-colors ${
+                          isSelected
+                            ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
+                            : "hover:bg-white/[0.03]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
+                            {hit.title}
+                          </div>
+                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black border border-[#00ffa3]/40 text-[#00ffa3] shrink-0">
+                            RRF: {hit.rrf_score.toFixed(4)}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] font-mono text-[#e4e6eb]/60 line-clamp-2 leading-relaxed">
+                          {hit.snippet}
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
+                          <span className="text-[#00ffa3]">
+                            {hit.object_type}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span>Cosine: {(hit.cosine_similarity * 100).toFixed(0)}%</span>
+                          {hit.citations.length > 0 && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="text-amber-400">
+                                {hit.citations.length} Citation{hit.citations.length > 1 ? "s" : ""}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
+              filteredSources.map((src) => {
+                const isSelected = selectedSource?.id === src.id;
+                return (
+                  <button
+                    key={src.id}
+                    type="button"
+                    onClick={() => setSelectedSourceId(src.id)}
+                    className={`block w-full text-left px-5 py-3 transition-colors ${
+                      isSelected
+                        ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
+                        : "hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
+                      {src.title}
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
+                      <span
+                        className={
+                          src.trust === "trusted" ? "text-[#00ffa3]" : "text-amber-400"
+                        }
+                      >
+                        {src.trust}
+                      </span>
+                      <span aria-hidden="true">·</span>
+                      <span>{src.kind}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{src.content_hash.slice(0, 8)}</span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
           </div>
 
           {/* Selected Source Immutable Inspector Footer */}

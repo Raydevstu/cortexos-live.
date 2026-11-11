@@ -272,6 +272,7 @@ export default function CortexOSApp() {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             customNodes={customBrainNodes}
+            projectId="proj-solar-crm"
           />
         )}
 
