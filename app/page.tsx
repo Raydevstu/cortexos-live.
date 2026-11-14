@@ -1,41 +1,36 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
+import AgentDockV2 from "@/components/os/AgentDockV2";
+import ModeSwitcher from "@/components/os/ModeSwitcher";
+import AgentActivityLayer from "@/components/os/AgentActivityLayer";
+import MainBrainHome from "@/components/os/MainBrainHome";
+import WorkspaceHost from "@/components/os/WorkspaceHost";
+import TerminalSandboxHome from "@/components/os/TerminalSandboxHome";
 import Brain3D from "@/components/Brain3D";
 import WarRoom from "@/components/WarRoom";
-import OsDashboard from "@/components/OsDashboard";
-import VaultExplorer from "@/components/VaultExplorer";
-import GrillMeInterviewer from "@/components/GrillMeInterviewer";
-import AuditEngine from "@/components/AuditEngine";
-import CortexTerminal from "@/components/CortexTerminal";
 import NodeInspector from "@/components/NodeInspector";
 import ArchitectureModal from "@/components/ArchitectureModal";
-import { BrainNode, KEY_NODES } from "@/lib/knowledge-data";
+import { AgentOSProvider, useAgentOS } from "@/lib/agent-os-store";
+import { KEY_NODES, type BrainNode } from "@/lib/knowledge-data";
 
-type ActiveSurface =
-  | "warroom"
-  | "brain"
-  | "dashboard"
-  | "vault"
-  | "grillme"
-  | "audit"
-  | "terminal";
+function CortexOSShell() {
+  const {
+    mode,
+    setMode,
+    activeProjectId,
+    setActiveProjectId,
+    customBrainNodes,
+    publishNodeToBrain,
+    selectedBrainNode,
+    setSelectedBrainNode,
+    isBlueprintOpen,
+    setIsBlueprintOpen,
+    runTerminalCommand,
+  } = useAgentOS();
 
-export default function CortexOSApp() {
-  // Default to War Room or Brain Mode with instant toggle
-  const [activeSurface, setActiveSurface] = useState<ActiveSurface>("warroom");
-  const [activeProjectId, setActiveProjectId] = useState<string>("proj-solar-crm");
-  const [selectedNode, setSelectedNode] = useState<BrainNode | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [terminalPrompt, setTerminalPrompt] = useState<string | undefined>(undefined);
-  const [customBrainNodes, setCustomBrainNodes] = useState<BrainNode[]>([]);
+  const [brainSearchQuery, setBrainSearchQuery] = useState("");
   const [loadedBrainNodes, setLoadedBrainNodes] = useState<BrainNode[]>([]);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const handlePublishNodeToBrain = useCallback((newNode: BrainNode) => {
-    setCustomBrainNodes((prev) => [newNode, ...prev]);
-  }, []);
 
   const handleSelectConnectedNode = async (nodeId: string) => {
     const found =
@@ -43,10 +38,9 @@ export default function CortexOSApp() {
       customBrainNodes.find((n) => n.id === nodeId) ||
       KEY_NODES.find((n) => n.id === nodeId);
     if (found) {
-      setSelectedNode(found);
+      setSelectedBrainNode(found);
       return;
     }
-
     try {
       const res = await fetch(`/api/graph/${encodeURIComponent(nodeId)}?depth=2`, {
         cache: "no-store",
@@ -57,25 +51,24 @@ export default function CortexOSApp() {
           setLoadedBrainNodes(data.nodes);
           const matched = data.nodes.find((n: BrainNode) => n.id === nodeId);
           if (matched) {
-            setSelectedNode(matched);
+            setSelectedBrainNode(matched);
             return;
           }
         }
       }
     } catch {
-      // Fallback below if offline
+      // Offline fallback node below
     }
-
-    setSelectedNode({
+    setSelectedBrainNode({
       id: nodeId,
       title: nodeId,
       category: "Wiki Page",
-      summary: "Connected node in CortexOS Postgres brain graph.",
+      summary: "Connected node in CortexOS brain graph.",
       notes: `# Connected Node: ${nodeId}`,
       stalenessDays: 0,
       needsAttention: false,
       connections: [],
-      tags: ["postgres-node"],
+      tags: ["graph-node"],
       x: 0,
       y: 0,
       z: 0,
@@ -84,293 +77,100 @@ export default function CortexOSApp() {
   };
 
   const handleAskAiAboutNode = (node: BrainNode) => {
-    setSelectedNode(null);
-    setTerminalPrompt(
-      `Analyze the "${node.title}" node (${node.category}). Summary: ${node.summary}. How does it connect to Jarvis Supervisor, the 7 Studios, and our active projects?`
+    setSelectedBrainNode(null);
+    void runTerminalCommand(
+      `@librarian analyze "${node.title}" (${node.category}) and its links to active studios`
     );
-    setActiveSurface("terminal");
-  };
-
-  const handleOpenTerminalWithPrompt = (prompt?: string) => {
-    setTerminalPrompt(prompt);
-    setActiveSurface("terminal");
   };
 
   return (
-    <main className="flex flex-col w-full h-screen bg-[#0c0d0f] text-[#e4e6eb] overflow-hidden select-none">
+    <main className="flex flex-col w-full h-screen bg-[#090b0f] text-[#e4e6eb] overflow-hidden">
       {/* ==================================================================== */}
-      {/* TOP BAR CONTRACT: 3 ZONES (Brand Wordmark — 5 Nav Links — 1 CTA)     */}
+      {/* AI OPERATING SYSTEM TOP BAR: Wordmark — AgentDockV2 — ModeSwitcher    */}
       {/* ==================================================================== */}
-      <header className="h-16 shrink-0 px-6 bg-[#0c0d0f] border-b-[1.5px] border-[#e4e6eb] flex items-center justify-between gap-8 z-30">
-        {/* Zone 1: Single text element wordmark */}
+      <header className="h-14 shrink-0 px-4 md:px-6 bg-[#0b0e14] border-b border-white/15 flex items-center justify-between gap-4 z-40">
         <a
-          href="#top"
+          href="#mainbrain"
           onClick={(e) => {
             e.preventDefault();
-            setActiveSurface("warroom");
+            setMode("mainbrain");
           }}
-          className="font-[family-name:var(--font-display)] text-2xl font-extrabold uppercase tracking-[-0.04em] text-[#e4e6eb] whitespace-nowrap shrink-0"
+          className="font-[family-name:var(--font-display)] text-xl font-extrabold tracking-tight text-[#e4e6eb] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[#00ffa3]"
         >
           Cortex<span className="text-[#00ffa3]">OS</span>
         </a>
 
-        {/* Zone 2: 5 concise single-line text navigation links */}
-        <nav
-          aria-label="Primary Navigation"
-          className="hidden md:flex items-center gap-6 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#e4e6eb]/50"
-        >
-          <button
-            type="button"
-            onClick={() => setActiveSurface("warroom")}
-            className={`hover:text-[#e4e6eb] transition-colors whitespace-nowrap shrink-0 py-2 border-b-2 ${
-              activeSurface === "warroom"
-                ? "border-[#00ffa3] text-[#00ffa3]"
-                : "border-transparent"
-            }`}
-          >
-            War Room
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSurface("brain")}
-            className={`hover:text-[#e4e6eb] transition-colors whitespace-nowrap shrink-0 py-2 border-b-2 ${
-              activeSurface === "brain"
-                ? "border-[#00ffa3] text-[#00ffa3]"
-                : "border-transparent"
-            }`}
-          >
-            3D Brain
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSurface("dashboard")}
-            className={`hover:text-[#e4e6eb] transition-colors whitespace-nowrap shrink-0 py-2 border-b-2 ${
-              activeSurface === "dashboard"
-                ? "border-[#00ffa3] text-[#00ffa3]"
-                : "border-transparent"
-            }`}
-          >
-            4C Dashboard
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSurface("vault")}
-            className={`hover:text-[#e4e6eb] transition-colors whitespace-nowrap shrink-0 py-2 border-b-2 ${
-              activeSurface === "vault"
-                ? "border-[#00ffa3] text-[#00ffa3]"
-                : "border-transparent"
-            }`}
-          >
-            Knowledge Vault
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSurface("terminal")}
-            className={`hover:text-[#e4e6eb] transition-colors whitespace-nowrap shrink-0 py-2 border-b-2 ${
-              activeSurface === "terminal"
-                ? "border-[#00ffa3] text-[#00ffa3]"
-                : "border-transparent"
-            }`}
-          >
-            Astra Terminal
-          </button>
-        </nav>
+        <AgentDockV2 />
 
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center shrink-0">
-          <button
-            type="button"
-            onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2 rounded-[2px] bg-[#00ffa3] hover:brightness-110 text-black font-extrabold text-[11px] uppercase tracking-wider transition-all whitespace-nowrap shrink-0"
-          >
-            Blueprint Spec
-          </button>
-        </div>
+        <ModeSwitcher />
       </header>
 
       {/* ==================================================================== */}
-      {/* WORKSPACE MODE TOGGLE BAR (BRAIN MODE <-> WAR ROOM MODE + TOOLS)     */}
+      {/* REAL-TIME AGENT PRESENCE LAYER                                       */}
       {/* ==================================================================== */}
-      <div className="h-12 shrink-0 px-6 bg-[#e4e6eb]/[0.06] border-b border-[#e4e6eb]/10 flex items-center justify-between gap-4 z-20">
-        {/* Primary Mode Toggle: Brain Mode vs War Room Mode */}
-        <div className="flex items-center gap-4">
-          <div
-            role="group"
-            aria-label="Primary Operating Mode Toggle"
-            className="flex items-center gap-0.5 p-0.5 bg-black border border-[#e4e6eb]/15"
-          >
-            <button
-              type="button"
-              onClick={() => setActiveSurface("brain")}
-              className={`px-3 py-1 rounded-[2px] text-[10px] uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-                activeSurface === "brain"
-                  ? "bg-[#00ffa3] text-black font-extrabold"
-                  : "text-[#e4e6eb]/80 hover:text-white"
-              }`}
-            >
-              Brain Mode
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSurface("warroom")}
-              className={`px-3 py-1 rounded-[2px] text-[10px] uppercase tracking-wider transition-all whitespace-nowrap shrink-0 ${
-                activeSurface === "warroom"
-                  ? "bg-[#00ffa3] text-black font-extrabold"
-                  : "text-[#e4e6eb]/80 hover:text-white"
-              }`}
-            >
-              War Room Mode
-            </button>
-          </div>
-
-          <span className="hidden lg:inline font-mono text-[10px] uppercase tracking-[0.14em] text-[#e4e6eb]/55">
-            {activeSurface === "warroom"
-              ? "Execution Layer: L-Research · C-Council · R-Workbench"
-              : activeSurface === "brain"
-              ? "Memory Layer: 3D Second Brain · 7 Studio Anchors · Chief Librarian"
-              : "4C Foundation Layer: Context · Connections · Capabilities · Cadence"}
-          </span>
-        </div>
-
-        {/* Secondary Second Brain Modules */}
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setActiveSurface("grillme")}
-            className={`px-3 py-1.5 border text-[10px] uppercase tracking-wider transition-colors whitespace-nowrap shrink-0 ${
-              activeSurface === "grillme"
-                ? "bg-[#003322] text-[#00ffa3] border-[#00ffa3]"
-                : "border-[#e4e6eb]/15 text-[#e4e6eb]/70 hover:text-[#e4e6eb]"
-            }`}
-          >
-            Grill-Me Stress Test
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSurface("audit")}
-            className={`px-3 py-1.5 border text-[10px] uppercase tracking-wider transition-colors whitespace-nowrap shrink-0 ${
-              activeSurface === "audit"
-                ? "bg-[#003322] text-[#00ffa3] border-[#00ffa3]"
-                : "border-[#e4e6eb]/15 text-[#e4e6eb]/70 hover:text-[#e4e6eb]"
-            }`}
-          >
-            4C Audit Engine
-          </button>
-        </div>
-      </div>
-
-      {/* Optional Toast Banner */}
-      {toastMessage && (
-        <div className="shrink-0 px-6 py-2 bg-[#003322] border-b border-[#00ffa3]/40 text-xs text-[#00ffa3] font-mono flex items-center justify-between">
-          <span>{toastMessage}</span>
-          <button
-            type="button"
-            onClick={() => setToastMessage(null)}
-            className="underline hover:text-white"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      <AgentActivityLayer />
 
       {/* ==================================================================== */}
-      {/* MAIN VIEWPORT                                                        */}
+      {/* CENTRAL OS VIEWPORT (MainBrain / Brain Mode / War Room + Workspaces) */}
       {/* ==================================================================== */}
-      <div className="relative flex-1 w-full min-h-0 overflow-hidden">
-        {activeSurface === "warroom" && (
-          <WarRoom
-            onPublishNodeToBrain={handlePublishNodeToBrain}
-            onSwitchToBrainMode={() => setActiveSurface("brain")}
-            activeProjectId={activeProjectId}
-            onActiveProjectIdChange={setActiveProjectId}
-          />
-        )}
+      <div className="relative flex-1 min-h-0 flex overflow-hidden">
+        {mode === "mainbrain" && <MainBrainHome />}
 
-        {activeSurface === "brain" && (
-          <Brain3D
-            onSelectNode={(node) => setSelectedNode(node)}
-            selectedNodeId={selectedNode?.id}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            customNodes={customBrainNodes}
-            projectId={activeProjectId}
-            onGraphNodesLoaded={setLoadedBrainNodes}
-          />
-        )}
-
-        {activeSurface === "dashboard" && (
-          <div className="w-full h-full overflow-y-auto">
-            <OsDashboard
-              onOpenBrain={() => setActiveSurface("brain")}
-              onOpenGrillMe={() => setActiveSurface("grillme")}
-              onOpenAudit={() => setActiveSurface("audit")}
-              onOpenTerminal={handleOpenTerminalWithPrompt}
+        {mode === "brain" && (
+          <div className="flex-1 min-w-0 h-full relative">
+            <Brain3D
+              onSelectNode={(node) => setSelectedBrainNode(node)}
+              selectedNodeId={selectedBrainNode?.id}
+              searchQuery={brainSearchQuery}
+              onSearchChange={setBrainSearchQuery}
+              customNodes={customBrainNodes}
+              projectId={activeProjectId}
+              onGraphNodesLoaded={setLoadedBrainNodes}
             />
           </div>
         )}
 
-        {activeSurface === "vault" && (
-          <div className="w-full h-full overflow-y-auto">
-            <VaultExplorer
-              onIngestToGraph={(title, summary) => {
-                handlePublishNodeToBrain({
-                  id: `node-vault-${Date.now()}`,
-                  title,
-                  category: "Wiki Page",
-                  kind: "note",
-                  area: "system",
-                  summary,
-                  notes: `# ${title}\n\n${summary}`,
-                  stalenessDays: 0,
-                  needsAttention: false,
-                  connections: ["node-chief-librarian", "node-cortex-engine"],
-                  tags: ["vault-ingested", "karpathy-wiki"],
-                  x: 35,
-                  y: 25,
-                  z: -25,
-                  radius: 6.5,
-                  isKeyAnchor: true,
-                });
-                setToastMessage(
-                  `Chief Librarian ingested "${title}" from 4C Vault and linked it into the 3D Brain Graph.`
-                );
-              }}
+        {mode === "warroom" && (
+          <div className="flex-1 min-w-0 h-full relative">
+            <WarRoom
+              onPublishNodeToBrain={publishNodeToBrain}
+              onSwitchToBrainMode={() => setMode("brain")}
+              activeProjectId={activeProjectId}
+              onActiveProjectIdChange={setActiveProjectId}
             />
           </div>
         )}
 
-        {activeSurface === "grillme" && (
-          <div className="w-full h-full overflow-y-auto">
-            <GrillMeInterviewer />
-          </div>
-        )}
+        {/* Summonable Workspace Layer (Slide-in Drawer / Pinned Rail / Focus / Dock) */}
+        <WorkspaceHost />
 
-        {activeSurface === "audit" && (
-          <div className="w-full h-full overflow-y-auto">
-            <AuditEngine />
-          </div>
-        )}
-
-        {activeSurface === "terminal" && (
-          <div className="w-full h-full overflow-y-auto">
-            <CortexTerminal initialPrompt={terminalPrompt} />
-          </div>
-        )}
-
-        {/* Slide-over Node Inspector */}
+        {/* Slide-over 3D Node Inspector */}
         <NodeInspector
-          node={selectedNode}
-          onClose={() => setSelectedNode(null)}
+          node={selectedBrainNode}
+          onClose={() => setSelectedBrainNode(null)}
           onSelectConnectedNode={handleSelectConnectedNode}
           onAskAiAboutNode={handleAskAiAboutNode}
         />
 
-        {/* Architecture & Blueprint Spec Modal */}
+        {/* Architecture & Blueprint Spec Modal (Summoned from Jarvis Workspace) */}
         <ArchitectureModal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
+          isOpen={isBlueprintOpen}
+          onClose={() => setIsBlueprintOpen(false)}
         />
       </div>
+
+      {/* ==================================================================== */}
+      {/* PERSISTENT TERMINAL SANDBOX HOME                                     */}
+      {/* ==================================================================== */}
+      <TerminalSandboxHome />
     </main>
+  );
+}
+
+export default function CortexOSApp() {
+  return (
+    <AgentOSProvider>
+      <CortexOSShell />
+    </AgentOSProvider>
   );
 }
