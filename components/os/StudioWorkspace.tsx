@@ -18,7 +18,7 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
     activeProject,
     artifactFeed,
     activityFeed,
-    runTerminalCommand,
+    dispatchWorkRequest,
   } = useAgentOS();
 
   const agent = agents.find((a) => a.id === agentId);
@@ -30,6 +30,7 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
   const [designSubTab, setDesignSubTab] = useState<
     "overview" | "wireframes" | "tokens" | "flows"
   >("overview");
+  const [isDispatching, setIsDispatching] = useState(false);
 
   if (!agent) return null;
 
@@ -38,8 +39,13 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
 
   const handleExecuteStudio = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!objective.trim()) return;
-    await runTerminalCommand(`@${agent.id} ${objective.trim()}`, agent.id);
+    if (!objective.trim() || isDispatching) return;
+    setIsDispatching(true);
+    try {
+      await dispatchWorkRequest(agent.id, objective.trim());
+    } finally {
+      setIsDispatching(false);
+    }
   };
 
   return (
@@ -63,16 +69,21 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
               className="mt-1.5 w-full px-3 py-2 rounded bg-[#11151d] border border-white/15 text-xs text-[#e4e6eb]"
             />
           </label>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+            <span className="text-sky-300 truncate">{agent.currentWorkflow}</span>
+            <span className="truncate">{agent.runtimeState}</span>
+          </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-mono text-slate-400">
               Runtime: {agent.provider} · {agent.model}
             </span>
             <button
               type="submit"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#00ffa3] text-black text-xs font-semibold hover:brightness-110"
+              disabled={isDispatching}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#00ffa3] text-black text-xs font-semibold hover:brightness-110 disabled:opacity-60"
             >
               <Play className="w-3.5 h-3.5" aria-hidden="true" />
-              <span>Run {agent.name} Agent</span>
+              <span>{isDispatching ? "Running..." : `Run ${agent.name} Agent`}</span>
             </button>
           </div>
         </form>

@@ -10,7 +10,7 @@ import {
   setWorkspaceModeState,
   summonWorkspaceState,
   type WorkspaceWindowState,
-} from "./agent-os-logic";
+} from "./agent-os-logic.ts";
 
 test("DOCK_AGENTS_SEED exposes all 9 canonical agents with required live telemetry fields", () => {
   assert.deepEqual(

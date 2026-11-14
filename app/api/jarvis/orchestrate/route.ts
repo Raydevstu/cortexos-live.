@@ -341,6 +341,17 @@ Produce:
       10
     );
 
+    const { getCortexRuntime } = await import("@/lib/runtime/cortex-runtime");
+    await getCortexRuntime().recordExternalOrchestration({
+      projectId: String(rawProjectId || "proj-solar-crm"),
+      studioSlug: targetStudio,
+      objective,
+      artifactId: persisted.artifact.id,
+      artifactTitle: persisted.artifact.title,
+      decisionTitle: generated.decision.title,
+      summary: generated.studioResponse,
+    });
+
     return NextResponse.json({
       ...generated,
       persisted,

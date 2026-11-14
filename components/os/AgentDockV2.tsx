@@ -107,16 +107,20 @@ function AgentTelemetryPopover({ agent }: { agent: DockAgentState }) {
 
       <dl className="mt-2.5 space-y-1.5 text-xs">
         <div className="flex items-start justify-between gap-3">
-          <dt className="text-slate-400 shrink-0">Status</dt>
-          <dd className={`font-medium ${vis.textClass} text-right`}>{vis.label}</dd>
+          <dt className="text-slate-400 shrink-0">Runtime State</dt>
+          <dd className={`font-medium ${vis.textClass} text-right`}>{agent.runtimeState}</dd>
         </div>
         <div className="flex items-start justify-between gap-3">
           <dt className="text-slate-400 shrink-0">Current Task</dt>
           <dd className="text-[#e4e6eb] text-right leading-snug">{agent.currentTask}</dd>
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <dt className="text-slate-400 shrink-0">Health</dt>
-          <dd className="font-mono tabular-nums text-[#e4e6eb]">{agent.health}%</dd>
+        <div className="flex items-start justify-between gap-3">
+          <dt className="text-slate-400 shrink-0">Current Workflow</dt>
+          <dd className="font-mono text-sky-300 text-right truncate">{agent.currentWorkflow}</dd>
+        </div>
+        <div className="flex items-start justify-between gap-3">
+          <dt className="text-slate-400 shrink-0">Current Artifact</dt>
+          <dd className="text-teal-300 text-right truncate">{agent.currentArtifact || agent.lastArtifact}</dd>
         </div>
         <div className="flex items-center justify-between gap-3">
           <dt className="text-slate-400 shrink-0">Provider</dt>
@@ -125,8 +129,12 @@ function AgentTelemetryPopover({ agent }: { agent: DockAgentState }) {
           </dd>
         </div>
         <div className="flex items-start justify-between gap-3">
-          <dt className="text-slate-400 shrink-0">Last Artifact</dt>
-          <dd className="text-teal-300 text-right truncate">{agent.lastArtifact}</dd>
+          <dt className="text-slate-400 shrink-0">Last Decision</dt>
+          <dd className="text-slate-300 text-right leading-snug line-clamp-2">{agent.lastDecision}</dd>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <dt className="text-slate-400 shrink-0">Health</dt>
+          <dd className="font-mono tabular-nums text-[#e4e6eb]">{agent.health}%</dd>
         </div>
       </dl>
 
@@ -171,7 +179,7 @@ export default function AgentDockV2() {
               data-testid={`dock-agent-${agent.id}`}
               aria-label={`Summon ${agent.name} workspace — ${vis.label}, ${agent.health}% health, ${agent.provider}`}
               aria-pressed={isSummoned}
-              title={`${agent.name} (${vis.label}) · ${agent.currentTask} · ${agent.health}% · ${agent.provider} · Last: ${agent.lastArtifact}`}
+              title={`${agent.name} (${agent.runtimeState}) · ${agent.currentTask} · Workflow: ${agent.currentWorkflow} · ${agent.provider} · Artifact: ${agent.currentArtifact}`}
               onClick={() => summonAgent(agent.id)}
               onMouseEnter={() => setInspectedAgentId(agent.id)}
               onFocus={() => setInspectedAgentId(agent.id)}
@@ -219,30 +227,49 @@ export function AgentDockRosterStrip() {
             key={agent.id}
             type="button"
             onClick={() => summonAgent(agent.id)}
-            className="text-left px-3 py-2.5 rounded-md bg-[#11141a] border border-white/10 hover:border-[#00ffa3]/50 transition-colors focus-visible:outline-2 focus-visible:outline-[#00ffa3]"
+            className="text-left px-3 py-2.5 rounded-md bg-[#11141a] border border-white/10 hover:border-[#00ffa3]/50 transition-colors focus-visible:outline-2 focus-visible:outline-[#00ffa3] space-y-1.5 min-w-0 overflow-hidden"
           >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
                 <StatusGlyph status={agent.status} />
-                <span className="text-xs font-semibold text-[#e4e6eb] whitespace-nowrap">
+                <span className="text-xs font-semibold text-[#e4e6eb] whitespace-nowrap shrink-0">
                   {agent.name}
                 </span>
-                <span className="text-[11px] text-slate-400 truncate">· {agent.role}</span>
+                <span className="text-[11px] text-slate-400 truncate min-w-0">
+                  · {agent.role}
+                </span>
               </div>
-              <span className={`font-mono text-[11px] font-medium ${vis.textClass} shrink-0`}>
+              <span className={`font-mono text-[11px] font-medium ${vis.textClass} shrink-0 whitespace-nowrap`}>
                 {vis.label}
               </span>
             </div>
-            <p className="mt-1 text-xs text-slate-300 truncate" title={agent.currentTask}>
+
+            <p className="text-xs text-[#e4e6eb] truncate" title={agent.currentTask}>
+              <span className="text-slate-400">Task: </span>
               {agent.currentTask}
             </p>
-            <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400 tabular-nums">
-              <span className="flex items-center gap-1 shrink-0 whitespace-nowrap">
+
+            <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400 min-w-0">
+              <span className="text-sky-300 truncate min-w-0" title={agent.currentWorkflow}>
+                {agent.currentWorkflow}
+              </span>
+              <span className="text-slate-300 truncate max-w-[55%] text-right" title={agent.runtimeState}>
+                {agent.runtimeState}
+              </span>
+            </div>
+
+            <div className="text-[11px] font-mono text-teal-300 truncate" title={agent.currentArtifact || agent.lastArtifact}>
+              <span className="text-slate-400">Artifact: </span>
+              {agent.currentArtifact || agent.lastArtifact}
+            </div>
+
+            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400 pt-1 border-t border-white/5 min-w-0">
+              <span className="flex items-center gap-1 font-mono shrink-0 whitespace-nowrap">
                 <Cpu className="w-3 h-3 shrink-0" aria-hidden="true" />
                 {agent.provider} · {agent.health}%
               </span>
-              <span className="text-teal-300 truncate min-w-0 text-right" title={agent.lastArtifact}>
-                {agent.lastArtifact}
+              <span className="truncate min-w-0 text-right text-slate-300" title={agent.lastDecision}>
+                Decision: {agent.lastDecision}
               </span>
             </div>
           </button>

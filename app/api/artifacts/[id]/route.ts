@@ -132,6 +132,15 @@ export async function PATCH(
       ]
     );
 
+    if (body.status === "approved" || body.status === "draft") {
+      const { getCortexRuntime } = await import("@/lib/runtime/cortex-runtime");
+      await getCortexRuntime().decideApproval({
+        artifactId: existing.id,
+        approved: body.status === "approved",
+        decidedBy: nextApprovedBy || "owner",
+      });
+    }
+
     return NextResponse.json(validated);
   } catch (err: unknown) {
     const error = err as Error;

@@ -33,6 +33,7 @@ export default function TerminalSandboxHome() {
     terminalHistory,
     isExecutingCommand,
     runTerminalCommand,
+    triggerProviderFailover,
     summonAgent,
   } = useAgentOS();
 
@@ -110,6 +111,14 @@ export default function TerminalSandboxHome() {
               <div className="text-[11px] text-slate-400 font-mono">
                 {currentProviderMeta.capabilities.join(" · ")}
               </div>
+
+              <button
+                type="button"
+                onClick={() => void triggerProviderFailover(selectedProvider)}
+                className="w-full px-2.5 py-1.5 rounded bg-[#151a24] border border-white/10 hover:border-amber-400/50 text-[11px] text-amber-300 font-mono text-left"
+              >
+                Trigger Provider Failover Drill
+              </button>
             </div>
 
             {latestTrace && (

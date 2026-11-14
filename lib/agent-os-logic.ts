@@ -49,6 +49,8 @@ export interface ProviderCatalogEntry {
   locality: "cloud" | "local";
 }
 
+export type WsConnectionStatus = "connecting" | "connected" | "reconnecting";
+
 export interface DockAgentState {
   id: DockAgentId;
   name: string;
@@ -57,6 +59,10 @@ export interface DockAgentState {
   mission: string;
   status: AgentLifecycleStatus;
   currentTask: string;
+  currentArtifact: string;
+  currentWorkflow: string;
+  runtimeState: string;
+  lastDecision: string;
   health: number;
   provider: string;
   model: string;
@@ -64,6 +70,86 @@ export interface DockAgentState {
   workload: number;
   tools: string[];
   capabilities: string[];
+  updatedAt: string;
+}
+
+export interface RuntimeWorkflowRecord {
+  id: string;
+  projectId: string;
+  workflowType: string;
+  taskQueue: string;
+  status: "pending" | "running" | "waiting_approval" | "completed" | "failed";
+  currentStep: string;
+  studioId?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface RuntimeWorkRequestRecord {
+  id: string;
+  projectId: string;
+  studioId: DockAgentId;
+  objective: string;
+  status: "pending" | "queued" | "assigned" | "executing" | "review" | "completed" | "blocked" | "failed";
+  workflowId: string;
+  artifactIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RuntimeCouncilOpinion {
+  agentId: DockAgentId;
+  studioId: string;
+  opinion: string;
+  recommendation: string;
+  risk: string;
+  confidence: number;
+}
+
+export interface RuntimeCouncilReport {
+  id: string;
+  projectId: string;
+  objective: string;
+  opinions: RuntimeCouncilOpinion[];
+  consensusSummary: string;
+  decisions: string[];
+  risks: string[];
+  workflowId: string;
+  createdAt: string;
+}
+
+export interface PendingApprovalItem {
+  id: string;
+  projectId: string;
+  workflowId: string;
+  artifactId?: string;
+  title: string;
+  requestedBy: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
+export interface RiskAlertItem {
+  id: string;
+  severity: "low" | "medium" | "high" | "critical";
+  source: string;
+  description: string;
+  mitigation: string;
+}
+
+export interface RuntimePresenceSnapshot {
+  projectId: string;
+  phase: DockAgentId;
+  agents: DockAgentState[];
+  workflows: RuntimeWorkflowRecord[];
+  workRequests: RuntimeWorkRequestRecord[];
+  pendingApprovals: PendingApprovalItem[];
+  risks: RiskAlertItem[];
+  councilReport: RuntimeCouncilReport | null;
+  activityFeed: AgentActivityEvent[];
+  artifactFeed: ArtifactFeedItem[];
+  knowledgeFeed: KnowledgeFeedItem[];
   updatedAt: string;
 }
 
@@ -105,12 +191,17 @@ export interface ArtifactFeedItem {
 
 export interface AgentActivityEvent {
   id: string;
+  eventType?: string;
   agentId: DockAgentId;
   agentName: string;
   status: AgentLifecycleStatus;
   task: string;
   summary: string;
   artifactTitle?: string;
+  workflowId?: string;
+  workflowType?: string;
+  runtimeState?: string;
+  lastDecision?: string;
   provider: string;
   timestamp: string;
 }
@@ -272,6 +363,10 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     mission: "Orchestrate cross-studio WorkRequests, quality gates, and phase advancement without direct workspace interference.",
     status: "executing",
     currentTask: "Coordinating Design -> Architecture readiness gate",
+    currentArtifact: "Phase Gate Decision #PG-04",
+    currentWorkflow: "ProjectLifecycleWorkflow",
+    runtimeState: "executing · Temporal jarvis-system",
+    lastDecision: "Enforce Design WCAG AA gate prior to Architecture handoff",
     health: 99,
     provider: "anthropic",
     model: "claude-sonnet-4",
@@ -289,6 +384,10 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     mission: "Curate MainBrain memory, ingest verified artifacts, extract entities/concepts, and audit graph contradictions.",
     status: "reviewing",
     currentTask: "Cross-linking WCAG Design Tokens to MainBrain graph",
+    currentArtifact: "Wiki Digest: OS Shell Patterns",
+    currentWorkflow: "MainBrainSyncWorkflow",
+    runtimeState: "reviewing · Knowledge Graph Sync",
+    lastDecision: "Approved claim provenance links with zero contradiction drift",
     health: 98,
     provider: "gemini",
     model: "gemini-2.5-pro",
@@ -306,6 +405,10 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     mission: "Map competitive benchmarks, user evidence, and problem-solution assumptions before Product framing.",
     status: "completed",
     currentTask: "Completed competitor OS interaction benchmark",
+    currentArtifact: "AI OS UX Signal Report v1.2",
+    currentWorkflow: "DiscoveryWorkflow",
+    runtimeState: "completed · Phase Cleared",
+    lastDecision: "Validated summonable overlay architecture over page tabs",
     health: 97,
     provider: "gemini",
     model: "gemini-2.5-pro",
@@ -323,6 +426,10 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     mission: "Distill validated discovery insights into scoped PRDs, acceptance gates, and phased roadmaps.",
     status: "completed",
     currentTask: "Signed off MainBrain + Summonable Studio PRD",
+    currentArtifact: "PRD: CortexOS Workspace Spec",
+    currentWorkflow: "ProductWorkflow",
+    runtimeState: "completed · PRD Frozen",
+    lastDecision: "Locked 6 real-time telemetry fields across OS presence layer",
     health: 99,
     provider: "openai",
     model: "gpt-4.1",
@@ -340,6 +447,10 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     mission: "Translate validated product requirements into accessible user flows, spatial wireframes, and semantic design tokens.",
     status: "executing",
     currentTask: "Auditing WCAG 2.1 AA contrast & summonable drawer grid",
+    currentArtifact: "Design System Tokens v1.0",
+    currentWorkflow: "DesignWorkflow",
+    runtimeState: "executing · Studio Runtime",
+    lastDecision: "Enforced zero-pill discipline and >= 4.5:1 obsidian contrast",
     health: 99,
     provider: "anthropic",
     model: "claude-sonnet-4",
@@ -357,6 +468,10 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     mission: "Produce resilient OpenAPI contracts, database schemas, service topology, and security threat models.",
     status: "planning",
     currentTask: "Drafting Workspace State Sync & WebSocket topology",
+    currentArtifact: "OpenAPI v3 Service Contracts",
+    currentWorkflow: "ArchitectureWorkflow",
+    runtimeState: "planning · Spec Synthesis",
+    lastDecision: "Scoped single-port WebSocket hub on /ws/agent-activity",
     health: 96,
     provider: "deepseek",
     model: "deepseek-r1",
@@ -373,7 +488,11 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     studioId: "development",
     mission: "Implement typed frontend/backend modules against frozen SDK contracts with deterministic test suites.",
     status: "reviewing",
-    currentTask: "Verifying AgentDockV2 & WorkspaceManager reducers",
+    currentTask: "Verifying AgentDockV2 & Event SDK WebSocket consumers",
+    currentArtifact: "PR #142: Terminal Sandbox Harness",
+    currentWorkflow: "DevelopmentWorkflow",
+    runtimeState: "reviewing · TypeScript & FastAPI Checks",
+    lastDecision: "Adopted server-authoritative WebSocket snapshot + delta sync",
     health: 98,
     provider: "anthropic",
     model: "claude-sonnet-4",
@@ -390,7 +509,11 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     studioId: "qa",
     mission: "Validate end-to-end journeys, keyboard traversal, accessibility compliance, and regression invariance.",
     status: "planning",
-    currentTask: "Preparing Playwright verification harness for OS shell",
+    currentTask: "Preparing Playwright WebSocket live-stream verification",
+    currentArtifact: "WCAG & Regression Matrix #88",
+    currentWorkflow: "QAWorkflow",
+    runtimeState: "planning · Harness Standby",
+    lastDecision: "Required zero WebSocket / console errors at 1440px viewport",
     health: 95,
     provider: "ollama",
     model: "qwen2.5-coder:32b",
@@ -407,7 +530,11 @@ export const DOCK_AGENTS_SEED: DockAgentState[] = [
     studioId: "release",
     mission: "Coordinate staged rollout checklists, changelog attestations, and telemetry health verification.",
     status: "idle",
-    currentTask: "Awaiting QA sign-off for Sprint 4/5 release bundle",
+    currentTask: "Awaiting QA sign-off for Sprint 5/6/7 runtime bundle",
+    currentArtifact: "Release Playbook v2026.11",
+    currentWorkflow: "ReleaseWorkflow",
+    runtimeState: "idle · Ready for Gate",
+    lastDecision: "Pinned custom Node server.ts on port 3000 with standalone fallback",
     health: 100,
     provider: "openrouter",
     model: "openrouter/auto",
@@ -854,4 +981,29 @@ export function advanceSimulatedAgentTick(
   };
 
   return { nextAgents, emittedEvent };
+}
+
+export function mergeAgentTelemetry(
+  agents: DockAgentState[],
+  patch: Partial<DockAgentState> & { id: DockAgentId }
+): DockAgentState[] {
+  return agents.map((agent) =>
+    agent.id === patch.id
+      ? {
+          ...agent,
+          ...patch,
+          currentArtifact: patch.currentArtifact ?? patch.lastArtifact ?? agent.currentArtifact,
+          lastArtifact: patch.lastArtifact ?? patch.currentArtifact ?? agent.lastArtifact,
+          updatedAt: patch.updatedAt ?? "Just now",
+        }
+      : agent
+  );
+}
+
+export function dedupActivityFeed(
+  feed: AgentActivityEvent[],
+  incoming: AgentActivityEvent,
+  limit = 30
+): AgentActivityEvent[] {
+  return [incoming, ...feed.filter((item) => item.id !== incoming.id)].slice(0, limit);
 }

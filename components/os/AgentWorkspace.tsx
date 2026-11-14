@@ -131,22 +131,35 @@ export default function AgentWorkspace({
         </div>
 
         {/* Live Telemetry Strip inside Workspace Chrome */}
-        <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400">
-          <div className="flex items-center gap-2 min-w-0">
-            <Cpu className="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true" />
-            <span className="text-slate-300 truncate">
-              Current task: {agent.currentTask}
+        <div className="mt-2.5 pt-2 border-t border-white/10 space-y-1 text-[11px] text-slate-400">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Cpu className="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true" />
+              <span className="text-slate-300 truncate">
+                Task: {agent.currentTask}
+              </span>
+            </div>
+            <span className={`font-mono ${vis.textClass} shrink-0`}>
+              {agent.runtimeState || vis.label}
             </span>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <span className="font-mono text-teal-300 truncate max-w-[200px]">
-              Last: {agent.lastArtifact}
+          <div className="flex flex-wrap items-center justify-between gap-2 font-mono">
+            <span className="text-sky-300 truncate">
+              Workflow: {agent.currentWorkflow}
+            </span>
+            <span className="text-teal-300 truncate max-w-[220px]">
+              Artifact: {agent.currentArtifact || agent.lastArtifact}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-slate-300 truncate min-w-0">
+              Last Decision: {agent.lastDecision}
             </span>
             {onRunInTerminal && (
               <button
                 type="button"
                 onClick={() => onRunInTerminal(`@${agent.id} inspect current state and propose next action`)}
-                className="inline-flex items-center gap-1 text-[11px] text-[#00ffa3] hover:underline whitespace-nowrap"
+                className="inline-flex items-center gap-1 text-[11px] text-[#00ffa3] hover:underline whitespace-nowrap shrink-0"
               >
                 <Terminal className="w-3 h-3" aria-hidden="true" />
                 <span>Send to Terminal</span>

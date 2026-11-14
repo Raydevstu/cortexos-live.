@@ -331,7 +331,7 @@ export default function MainBrainHome() {
                   <article key={ev.id} className="p-3.5 space-y-1.5 hover:bg-white/[0.02] transition-colors">
                     <div className="flex items-center justify-between gap-2 text-[11px] font-mono">
                       <span className={`font-semibold ${vis.textClass}`}>
-                        {ev.agentName} · {vis.label}
+                        {ev.agentName} · {ev.runtimeState || vis.label}
                       </span>
                       <span className="text-slate-400 tabular-nums">{ev.timestamp}</span>
                     </div>
@@ -339,6 +339,19 @@ export default function MainBrainHome() {
                       {ev.task}
                     </h3>
                     <p className="text-xs text-slate-400 leading-relaxed">{ev.summary}</p>
+                    {(ev.workflowType || ev.artifactTitle) && (
+                      <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+                        <span className="text-sky-300 truncate">{ev.workflowType || "EventBus"}</span>
+                        {ev.artifactTitle && (
+                          <span className="text-teal-300 truncate text-right">{ev.artifactTitle}</span>
+                        )}
+                      </div>
+                    )}
+                    {ev.lastDecision && (
+                      <p className="text-[11px] text-slate-300 truncate">
+                        Decision: {ev.lastDecision}
+                      </p>
+                    )}
                     <div className="pt-1 flex items-center justify-between text-[11px] text-slate-400">
                       <span className="font-mono truncate">{ev.provider}</span>
                       <button

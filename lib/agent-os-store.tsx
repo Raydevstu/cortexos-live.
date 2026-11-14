@@ -10,13 +10,14 @@ import React, {
   useState,
 } from "react";
 import {
-  advanceSimulatedAgentTick,
   closeWorkspaceState,
+  dedupActivityFeed,
   DOCK_AGENTS_SEED,
   INITIAL_ACTIVITY_FEED,
   INITIAL_ARTIFACT_FEED,
   INITIAL_KNOWLEDGE_FEED,
   INITIAL_TERMINAL_HISTORY,
+  mergeAgentTelemetry,
   parseTerminalCommand,
   PROJECT_CONTEXTS_SEED,
   PROVIDERS_CATALOG,
@@ -29,13 +30,20 @@ import {
   type DockAgentState,
   type KnowledgeFeedItem,
   type OperatingMode,
+  type PendingApprovalItem,
   type ProjectContextSummary,
   type ProviderId,
+  type RiskAlertItem,
+  type RuntimeCouncilReport,
+  type RuntimePresenceSnapshot,
+  type RuntimeWorkRequestRecord,
+  type RuntimeWorkflowRecord,
   type TerminalTraceEntry,
   type TerminalTraceStep,
   type WorkspaceKind,
   type WorkspaceMode,
   type WorkspaceWindowState,
+  type WsConnectionStatus,
 } from "@/lib/agent-os-logic";
 import type { BrainNode } from "@/lib/knowledge-data";
 
@@ -65,8 +73,36 @@ interface AgentOSContextValue {
   knowledgeFeed: KnowledgeFeedItem[];
   artifactFeed: ArtifactFeedItem[];
   activityFeed: AgentActivityEvent[];
+
+  workflows: RuntimeWorkflowRecord[];
+  workRequests: RuntimeWorkRequestRecord[];
+  pendingApprovals: PendingApprovalItem[];
+  risks: RiskAlertItem[];
+  councilReport: RuntimeCouncilReport | null;
+
+  wsStatus: WsConnectionStatus;
+  streamPaused: boolean;
+  setStreamPaused: (paused: boolean) => void;
+  refreshRuntimeSnapshot: () => Promise<void>;
+
   ingestKnowledgeItem: (item: Omit<KnowledgeFeedItem, "id" | "updatedAt">) => void;
-  advanceProjectPhase: (nextPhase: DockAgentId) => void;
+  advanceProjectPhase: (nextPhase: DockAgentId) => Promise<void>;
+  dispatchWorkRequest: (
+    studioId: DockAgentId,
+    objective: string
+  ) => Promise<void>;
+  conveneCouncil: (objective: string, studios?: DockAgentId[]) => Promise<void>;
+  submitApprovalDecision: (params: {
+    approvalId?: string;
+    workflowId?: string;
+    artifactId?: string;
+    approved: boolean;
+    feedback?: string;
+  }) => Promise<void>;
+  triggerProviderFailover: (
+    failedProvider: string,
+    targetProvider?: string
+  ) => Promise<void>;
 
   selectedProvider: ProviderId;
   setSelectedProvider: (provider: ProviderId) => void;
@@ -77,9 +113,6 @@ interface AgentOSContextValue {
   terminalHistory: TerminalTraceEntry[];
   isExecutingCommand: boolean;
   runTerminalCommand: (command: string, fallbackAgent?: DockAgentId) => Promise<void>;
-
-  simulationLive: boolean;
-  setSimulationLive: (live: boolean) => void;
 
   customBrainNodes: BrainNode[];
   publishNodeToBrain: (node: BrainNode) => void;
@@ -105,6 +138,16 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
   const [artifactFeed, setArtifactFeed] = useState<ArtifactFeedItem[]>(INITIAL_ARTIFACT_FEED);
   const [activityFeed, setActivityFeed] = useState<AgentActivityEvent[]>(INITIAL_ACTIVITY_FEED);
 
+  const [workflows, setWorkflows] = useState<RuntimeWorkflowRecord[]>([]);
+  const [workRequests, setWorkRequests] = useState<RuntimeWorkRequestRecord[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApprovalItem[]>([]);
+  const [risks, setRisks] = useState<RiskAlertItem[]>([]);
+  const [councilReport, setCouncilReport] = useState<RuntimeCouncilReport | null>(null);
+
+  const [wsStatus, setWsStatus] = useState<WsConnectionStatus>("connecting");
+  const [streamPaused, setStreamPaused] = useState<boolean>(false);
+  const streamPausedRef = useRef<boolean>(false);
+
   const [selectedProvider, setSelectedProviderState] = useState<ProviderId>("anthropic");
   const [selectedModel, setSelectedModel] = useState<string>("claude-sonnet-4");
   const [terminalExpanded, setTerminalExpanded] = useState<boolean>(false);
@@ -112,17 +155,13 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     useState<TerminalTraceEntry[]>(INITIAL_TERMINAL_HISTORY);
   const [isExecutingCommand, setIsExecutingCommand] = useState<boolean>(false);
 
-  const [simulationLive, setSimulationLive] = useState<boolean>(true);
-  const tickRef = useRef<number>(0);
-  const agentsRef = useRef<DockAgentState[]>(DOCK_AGENTS_SEED);
-
   const [customBrainNodes, setCustomBrainNodes] = useState<BrainNode[]>([]);
   const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
   const [isBlueprintOpen, setIsBlueprintOpen] = useState<boolean>(false);
 
   useEffect(() => {
-    agentsRef.current = agents;
-  }, [agents]);
+    streamPausedRef.current = streamPaused;
+  }, [streamPaused]);
 
   const setSelectedProvider = useCallback((providerId: ProviderId) => {
     setSelectedProviderState(providerId);
@@ -137,32 +176,194 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     [projects, activeProjectId]
   );
 
-  // Real-time simulated agent presence loop (pure sibling updates, StrictMode safe)
+  const applySnapshot = useCallback((snap: RuntimePresenceSnapshot) => {
+    if (!snap) return;
+    if (Array.isArray(snap.agents) && snap.agents.length > 0) {
+      setAgents(snap.agents);
+    }
+    if (Array.isArray(snap.workflows)) {
+      setWorkflows(snap.workflows);
+    }
+    if (Array.isArray(snap.workRequests)) {
+      setWorkRequests(snap.workRequests);
+    }
+    if (Array.isArray(snap.pendingApprovals)) {
+      setPendingApprovals(snap.pendingApprovals);
+    }
+    if (Array.isArray(snap.risks)) {
+      setRisks(snap.risks);
+    }
+    if (snap.councilReport !== undefined) {
+      setCouncilReport(snap.councilReport);
+    }
+    if (!streamPausedRef.current) {
+      if (Array.isArray(snap.activityFeed) && snap.activityFeed.length > 0) {
+        setActivityFeed(snap.activityFeed);
+      }
+      if (Array.isArray(snap.artifactFeed) && snap.artifactFeed.length > 0) {
+        setArtifactFeed(snap.artifactFeed);
+      }
+      if (Array.isArray(snap.knowledgeFeed) && snap.knowledgeFeed.length > 0) {
+        setKnowledgeFeed(snap.knowledgeFeed);
+      }
+    }
+    if (snap.projectId && snap.phase) {
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.id === snap.projectId ? { ...p, phase: snap.phase } : p
+        )
+      );
+    }
+  }, []);
+
+  const refreshRuntimeSnapshot = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/runtime/state?projectId=${encodeURIComponent(activeProjectId)}`,
+        { cache: "no-store" }
+      );
+      if (res.ok) {
+        const snap = (await res.json()) as RuntimePresenceSnapshot;
+        applySnapshot(snap);
+      }
+    } catch {
+      // Transient fetch failures recover cleanly on WebSocket reconnect
+    }
+  }, [activeProjectId, applySnapshot]);
+
+  // Real-time WebSocket subscriber replacing mocked setInterval simulation
   useEffect(() => {
-    if (!simulationLive) return;
-    const timer = window.setInterval(() => {
-      tickRef.current += 1;
-      const tick = tickRef.current;
-      const { nextAgents, emittedEvent } = advanceSimulatedAgentTick(
-        agentsRef.current,
-        tick
-      );
-      const uniqueEvent: AgentActivityEvent = {
-        ...emittedEvent,
-        id: `act-live-${tick}-${emittedEvent.agentId}`,
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let attempt = 0;
+
+    fetch(`/api/runtime/state?projectId=${encodeURIComponent(activeProjectId)}`, {
+      cache: "no-store",
+    })
+      .then((res) => (res.ok ? (res.json() as Promise<RuntimePresenceSnapshot>) : null))
+      .then((snap) => {
+        if (active && snap) {
+          applySnapshot(snap);
+        }
+      })
+      .catch(() => {
+        // Transient fetch failures recover cleanly on WebSocket reconnect
+      });
+
+    const connect = () => {
+      if (!active || typeof window === "undefined") return;
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${proto}//${window.location.host}/ws/agent-activity`;
+
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+
+      ws.onopen = () => {
+        if (!active) return;
+        attempt = 0;
+        setWsStatus("connected");
       };
-      agentsRef.current = nextAgents;
-      setAgents(nextAgents);
-      setActivityFeed((prevFeed) =>
-        [uniqueEvent, ...prevFeed.filter((e) => e.id !== uniqueEvent.id)].slice(0, 24)
-      );
-    }, 3600);
-    return () => window.clearInterval(timer);
-  }, [simulationLive]);
+
+      ws.onmessage = (evt) => {
+        if (!active) return;
+        try {
+          const frame = JSON.parse(String(evt.data)) as {
+            type: string;
+            payload: unknown;
+          };
+
+          if (frame.type === "presence.snapshot") {
+            applySnapshot(frame.payload as RuntimePresenceSnapshot);
+            return;
+          }
+
+          if (frame.type === "agent.telemetry") {
+            const updatedAgent = frame.payload as DockAgentState;
+            setAgents((prev) => mergeAgentTelemetry(prev, updatedAgent));
+            return;
+          }
+
+          if (frame.type === "event.dispatched") {
+            if (streamPausedRef.current) return;
+            const data = frame.payload as { activity?: AgentActivityEvent };
+            if (data.activity) {
+              setActivityFeed((prev) => dedupActivityFeed(prev, data.activity!, 30));
+            }
+            return;
+          }
+
+          if (frame.type === "workflow.updated") {
+            const wf = frame.payload as RuntimeWorkflowRecord;
+            setWorkflows((prev) =>
+              [wf, ...prev.filter((item) => item.id !== wf.id)].slice(0, 24)
+            );
+            return;
+          }
+
+          if (frame.type === "work_request.updated") {
+            const wr = frame.payload as RuntimeWorkRequestRecord;
+            setWorkRequests((prev) =>
+              [wr, ...prev.filter((item) => item.id !== wr.id)].slice(0, 24)
+            );
+            return;
+          }
+
+          if (frame.type === "council.updated") {
+            setCouncilReport(frame.payload as RuntimeCouncilReport);
+          }
+        } catch {
+          // Ignore unparseable WS frames cleanly
+        }
+      };
+
+      ws.onclose = () => {
+        if (!active) return;
+        setWsStatus("reconnecting");
+        scheduleReconnect();
+      };
+
+      ws.onerror = () => {
+        if (!active) return;
+        ws?.close();
+      };
+    };
+
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimer !== null) return;
+      attempt += 1;
+      const delay = Math.min(8000, 1000 * Math.pow(1.5, Math.min(attempt, 5)));
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        if (active) {
+          setWsStatus("reconnecting");
+          connect();
+        }
+      }, delay);
+    };
+
+    connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
+    };
+  }, [activeProjectId, applySnapshot]);
 
   const summonAgent = useCallback(
     (agentId: DockAgentId, preferredMode?: WorkspaceMode) => {
-      const target = DOCK_AGENTS_SEED.find((a) => a.id === agentId);
+      const target =
+        agents.find((a) => a.id === agentId) ??
+        DOCK_AGENTS_SEED.find((a) => a.id === agentId);
       if (!target) return;
       zCounterRef.current += 1;
       const kind: WorkspaceKind = resolveWorkspaceKind(agentId);
@@ -182,7 +383,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
         })
       );
     },
-    []
+    [agents]
   );
 
   const summonUtilityWorkspace = useCallback(
@@ -229,67 +430,137 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
 
   const ingestKnowledgeItem = useCallback(
     (item: Omit<KnowledgeFeedItem, "id" | "updatedAt">) => {
-      const created: KnowledgeFeedItem = {
-        ...item,
-        id: `kf-${Date.now()}`,
-        updatedAt: "Just now",
-      };
-      setKnowledgeFeed((prev) => [created, ...prev]);
-      const actEvent: AgentActivityEvent = {
-        id: `act-ing-${Date.now()}`,
-        agentId: "librarian",
-        agentName: "Librarian",
-        status: "completed",
-        task: `Ingested "${item.title}" into MainBrain`,
-        summary: `Linked ${item.connectionsCount} semantic edges in Project ${item.projectId}.`,
-        artifactTitle: item.title,
-        provider: "gemini · gemini-2.5-pro",
-        timestamp: "Just now",
-      };
-      setActivityFeed((prev) => [actEvent, ...prev].slice(0, 24));
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.id === "librarian"
-            ? {
-                ...a,
-                status: "completed",
-                currentTask: `Indexed "${item.title}"`,
-                lastArtifact: item.title,
-                updatedAt: "Just now",
-              }
-            : a
-        )
-      );
+      void fetch("/api/runtime/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(item),
+      })
+        .then(async (res) => {
+          if (res.ok) {
+            const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+            applySnapshot(data.snapshot);
+          }
+        })
+        .catch(() => null);
     },
-    []
+    [applySnapshot]
   );
 
   const advanceProjectPhase = useCallback(
-    (nextPhase: DockAgentId) => {
-      setProjects((prev) =>
-        prev.map((p) =>
-          p.id === activeProjectId
-            ? {
-                ...p,
-                phase: nextPhase,
-                readinessSummary: `Phase transitioned to ${nextPhase.toUpperCase()} via Jarvis Gate`,
-              }
-            : p
-        )
-      );
-      const gateEvent: AgentActivityEvent = {
-        id: `act-gate-${Date.now()}`,
-        agentId: "jarvis",
-        agentName: "Jarvis",
-        status: "completed",
-        task: `Advanced ${activeProjectId} to ${nextPhase} phase`,
-        summary: `Jarvis approved cross-studio handoff and updated Project Context.`,
-        provider: `${selectedProvider} · ${selectedModel}`,
-        timestamp: "Just now",
-      };
-      setActivityFeed((prev) => [gateEvent, ...prev].slice(0, 24));
+    async (nextPhase: DockAgentId) => {
+      try {
+        const res = await fetch("/api/runtime/phase", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            projectId: activeProjectId,
+            targetPhase: nextPhase,
+            approvedBy: "Owner",
+            force: true,
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+          applySnapshot(data.snapshot);
+        }
+      } catch {
+        // Reconciled automatically by WS
+      }
     },
-    [activeProjectId, selectedModel, selectedProvider]
+    [activeProjectId, applySnapshot]
+  );
+
+  const dispatchWorkRequest = useCallback(
+    async (studioId: DockAgentId, objective: string) => {
+      const trimmed = objective.trim();
+      if (!trimmed) return;
+      const res = await fetch("/api/runtime/dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          studioId,
+          objective: trimmed,
+          provider: selectedProvider,
+          model: selectedModel,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+        applySnapshot(data.snapshot);
+      }
+    },
+    [activeProjectId, applySnapshot, selectedModel, selectedProvider]
+  );
+
+  const conveneCouncil = useCallback(
+    async (objective: string, studios?: DockAgentId[]) => {
+      const res = await fetch("/api/runtime/council", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          objective,
+          studios,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+        applySnapshot(data.snapshot);
+      }
+    },
+    [activeProjectId, applySnapshot]
+  );
+
+  const submitApprovalDecision = useCallback(
+    async (params: {
+      approvalId?: string;
+      workflowId?: string;
+      artifactId?: string;
+      approved: boolean;
+      feedback?: string;
+    }) => {
+      const res = await fetch("/api/runtime/approval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          ...params,
+          decidedBy: "Owner",
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+        applySnapshot(data.snapshot);
+      }
+    },
+    [activeProjectId, applySnapshot]
+  );
+
+  const triggerProviderFailover = useCallback(
+    async (failedProvider: string, targetProvider?: string) => {
+      const res = await fetch("/api/runtime/failover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          failedProvider,
+          targetProvider,
+          reason: "Operator-triggered failover test",
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          activeProvider: ProviderId;
+          snapshot: RuntimePresenceSnapshot;
+        };
+        if (data.activeProvider) {
+          setSelectedProvider(data.activeProvider);
+        }
+        applySnapshot(data.snapshot);
+      }
+    },
+    [activeProjectId, applySnapshot, setSelectedProvider]
   );
 
   const runTerminalCommand = useCallback(
@@ -329,176 +600,83 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
         agents.find((a) => a.id === targetId) ??
         DOCK_AGENTS_SEED.find((a) => a.id === targetId)!;
 
-      // Transition agent -> Planning -> Executing -> Reviewing -> Completed
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.id === targetId
-            ? {
-                ...a,
-                status: "planning",
-                currentTask: parsed.objective,
-                provider: selectedProvider,
-                model: selectedModel,
-                workload: 65,
-                updatedAt: "Just now",
-              }
-            : a
-        )
-      );
-
-      await new Promise((r) => setTimeout(r, 140));
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.id === targetId ? { ...a, status: "executing", workload: 88 } : a
-        )
-      );
-
-      let aiSummary: string | null = null;
       try {
-        const res = await fetch("/api/gemini/chat", {
+        const res = await fetch("/api/runtime/dispatch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            messages: [
-              {
-                role: "user",
-                content: `[CortexOS ${targetAgent.name} (${selectedProvider}/${selectedModel}) | Project: ${activeProject.name}] ${parsed.objective}`,
-              },
-            ],
-            model: "gemini-3.8-flash",
-            useSearch: false,
+            projectId: activeProject.id,
+            studioId: targetId,
+            objective: parsed.objective,
+            provider: selectedProvider,
+            model: selectedModel,
+            command: trimmed,
           }),
         });
+
         if (res.ok) {
-          const data = await res.json();
-          if (typeof data.text === "string" && data.text.trim().length > 0) {
-            aiSummary = data.text.trim();
-          }
+          const data = (await res.json()) as {
+            workRequest: RuntimeWorkRequestRecord;
+            workflow: RuntimeWorkflowRecord;
+            artifact: ArtifactFeedItem;
+            summary: string;
+            snapshot: RuntimePresenceSnapshot;
+          };
+
+          applySnapshot(data.snapshot);
+
+          const steps: TerminalTraceStep[] = [
+            {
+              phase: "Planning",
+              detail: `Jarvis assigned WorkRequest ${data.workRequest.id} via ${data.workflow.workflowType}.`,
+            },
+            {
+              phase: "Executing",
+              detail: `${targetAgent.name} executed via ${selectedProvider}/${selectedModel} inside ${data.workflow.taskQueue}.`,
+              tool: targetAgent.tools[0],
+            },
+            {
+              phase: "Reviewing",
+              detail: `Validated artifact checksum #${data.artifact.checksumPrefix} & synced Librarian pipeline.`,
+              tool: targetAgent.tools[1] ?? "quality_gate",
+            },
+            {
+              phase: "Completed",
+              detail: `Emitted "${data.artifact.title}" and broadcast Event SDK telemetry via WebSocket.`,
+            },
+          ];
+
+          const traceEntry: TerminalTraceEntry = {
+            id: `term-${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            }),
+            command: trimmed,
+            targetAgentId: targetId,
+            provider: selectedProvider,
+            model: selectedModel,
+            contextLayers: [
+              `1. Prompt: ${parsed.objective}`,
+              `2. Project: ${activeProject.name} (phase=${data.snapshot.phase})`,
+              `3. Artifacts: ${data.snapshot.artifactFeed.slice(0, 2).map((a) => a.title).join(", ")}`,
+              `4. Workflow: ${data.workflow.workflowType} (${data.workflow.id})`,
+              `5. Knowledge: ${data.snapshot.knowledgeFeed.slice(0, 2).map((k) => k.title).join(", ")}`,
+              `6. Studio: ${targetAgent.studioId}`,
+            ],
+            steps,
+            outputSummary: data.summary,
+            emittedArtifactTitle: data.artifact.title,
+          };
+
+          setTerminalHistory((prev) => [traceEntry, ...prev]);
         }
-      } catch {
-        // Resilient local harness execution summary if offline or API key unset
+      } finally {
+        setIsExecutingCommand(false);
       }
-
-      await new Promise((r) => setTimeout(r, 140));
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.id === targetId ? { ...a, status: "reviewing", workload: 72 } : a
-        )
-      );
-
-      const emittedTitle =
-        targetId === "design"
-          ? `Design Spec: ${parsed.objective.slice(0, 42)}`
-          : targetId === "architecture"
-          ? `Architecture Blueprint: ${parsed.objective.slice(0, 36)}`
-          : targetId === "librarian"
-          ? `Wiki Digest: ${parsed.objective.slice(0, 40)}`
-          : `${targetAgent.name} Output: ${parsed.objective.slice(0, 38)}`;
-
-      const finalOutput =
-        aiSummary ||
-        `${targetAgent.name} (${selectedProvider} · ${selectedModel}) executed "${parsed.objective}" against Project ${activeProject.name} with 6-layer Context Stack binding and registered "${emittedTitle}".`;
-
-      const steps: TerminalTraceStep[] = [
-        {
-          phase: "Planning",
-          detail: `Bound 6-layer Context Stack for ${activeProject.name} (${activeProject.phase}) and routed to ${targetAgent.name}.`,
-        },
-        {
-          phase: "Executing",
-          detail: `Executed tool chain [${targetAgent.tools.slice(0, 2).join(", ")}] via ${selectedProvider}/${selectedModel}.`,
-          tool: targetAgent.tools[0],
-        },
-        {
-          phase: "Reviewing",
-          detail:
-            targetId === "design"
-              ? "Verified WCAG 2.1 AA contrast ratios (>= 4.5:1) and structural landmarks."
-              : "Validated output against Studio constraints and SHA-256 artifact checksums.",
-          tool: targetAgent.tools[1] ?? "quality_gate",
-        },
-        {
-          phase: "Completed",
-          detail: `Emitted "${emittedTitle}" to MainBrain Artifact Feed and Agent Activity Feed.`,
-        },
-      ];
-
-      const traceEntry: TerminalTraceEntry = {
-        id: `term-${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        command: trimmed,
-        targetAgentId: targetId,
-        provider: selectedProvider,
-        model: selectedModel,
-        contextLayers: [
-          `1. Prompt: ${parsed.objective}`,
-          `2. Project: ${activeProject.name} (phase=${activeProject.phase})`,
-          `3. Artifacts: ${artifactFeed.slice(0, 2).map((a) => a.title).join(", ")}`,
-          `4. Memory: ${targetAgent.role} operational constraints`,
-          `5. Knowledge: ${knowledgeFeed.slice(0, 2).map((k) => k.title).join(", ")}`,
-          `6. Studio: ${targetAgent.studioId}`,
-        ],
-        steps,
-        outputSummary: finalOutput,
-        emittedArtifactTitle: emittedTitle,
-      };
-
-      setTerminalHistory((prev) => [traceEntry, ...prev]);
-
-      const newArtifact: ArtifactFeedItem = {
-        id: `art-live-${Date.now()}`,
-        title: emittedTitle,
-        artifactType:
-          targetId === "design"
-            ? "wireframe"
-            : targetId === "architecture"
-            ? "architecture_spec"
-            : targetId === "librarian"
-            ? "wiki_digest"
-            : "agent_artifact",
-        studioId: targetId,
-        status: "review",
-        version: "1.0.0",
-        projectId: activeProject.id,
-        checksumPrefix: Math.random().toString(16).slice(2, 10),
-        summary: finalOutput.slice(0, 180),
-        updatedAt: "Just now",
-      };
-      setArtifactFeed((prev) => [newArtifact, ...prev]);
-
-      const completedEvent: AgentActivityEvent = {
-        id: `act-cmd-${Date.now()}`,
-        agentId: targetId,
-        agentName: targetAgent.name,
-        status: "completed",
-        task: parsed.objective,
-        summary: `Completed via Terminal Sandbox (${selectedProvider} · ${selectedModel})`,
-        artifactTitle: emittedTitle,
-        provider: `${selectedProvider} · ${selectedModel}`,
-        timestamp: "Just now",
-      };
-      setActivityFeed((prev) => [completedEvent, ...prev].slice(0, 24));
-
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.id === targetId
-            ? {
-                ...a,
-                status: "completed",
-                currentTask: parsed.objective,
-                lastArtifact: emittedTitle,
-                provider: selectedProvider,
-                model: selectedModel,
-                workload: 42,
-                updatedAt: "Just now",
-              }
-            : a
-        )
-      );
-
-      setIsExecutingCommand(false);
     },
-    [activeProject, agents, artifactFeed, knowledgeFeed, selectedModel, selectedProvider]
+    [activeProject, agents, applySnapshot, selectedModel, selectedProvider]
   );
 
   const value: AgentOSContextValue = {
@@ -520,8 +698,21 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     knowledgeFeed,
     artifactFeed,
     activityFeed,
+    workflows,
+    workRequests,
+    pendingApprovals,
+    risks,
+    councilReport,
+    wsStatus,
+    streamPaused,
+    setStreamPaused,
+    refreshRuntimeSnapshot,
     ingestKnowledgeItem,
     advanceProjectPhase,
+    dispatchWorkRequest,
+    conveneCouncil,
+    submitApprovalDecision,
+    triggerProviderFailover,
     selectedProvider,
     setSelectedProvider,
     selectedModel,
@@ -531,8 +722,6 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     terminalHistory,
     isExecutingCommand,
     runTerminalCommand,
-    simulationLive,
-    setSimulationLive,
     customBrainNodes,
     publishNodeToBrain,
     selectedBrainNode,
