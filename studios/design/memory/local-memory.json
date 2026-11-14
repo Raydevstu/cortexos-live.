@@ -1,0 +1,42 @@
+[
+  {
+    "id": "mem-design-pattern-001",
+    "createdAt": "2026-11-14T00:00:00Z",
+    "updatedAt": "2026-11-14T00:00:00Z",
+    "agentId": "design-agent",
+    "projectId": null,
+    "memoryType": "pattern",
+    "content": "Design systems bind all surfaces and interactive primitives to semantic tokens (--surface-canvas, --surface-elevated, --ink-primary, --border-focus) before component specs are emitted.",
+    "importanceScore": 0.95
+  },
+  {
+    "id": "mem-design-constraint-002",
+    "createdAt": "2026-11-14T00:00:00Z",
+    "updatedAt": "2026-11-14T00:00:00Z",
+    "agentId": "design-agent",
+    "projectId": null,
+    "memoryType": "constraint",
+    "content": "WCAG 2.1 AA requires >= 4.5:1 contrast for body copy, >= 3.0:1 for large text and interactive UI borders, visible focus-visible indicators, and reduced-motion parity.",
+    "importanceScore": 0.98
+  },
+  {
+    "id": "mem-design-pattern-003",
+    "createdAt": "2026-11-14T00:00:00Z",
+    "updatedAt": "2026-11-14T00:00:00Z",
+    "agentId": "design-agent",
+    "projectId": null,
+    "memoryType": "pattern",
+    "content": "Every wireframe specification defines explicit loading, empty, populated, and recoverable error states plus responsive desktop/tablet/mobile geometry.",
+    "importanceScore": 0.92
+  },
+  {
+    "id": "mem-design-lesson-004",
+    "createdAt": "2026-11-14T00:00:00Z",
+    "updatedAt": "2026-11-14T00:00:00Z",
+    "agentId": "design-agent",
+    "projectId": null,
+    "memoryType": "lesson",
+    "content": "CortexOS-native interfaces preserve Agent Dock + MainBrain + Terminal Sandbox + Summonable Workspace flows without multi-page SaaS navigation sidebars.",
+    "importanceScore": 0.94
+  }
+]

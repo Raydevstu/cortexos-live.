@@ -1,0 +1,51 @@
+tools:
+  - id: v0
+    name: Vercel v0 Component Synthesizer
+    category: ui_generation
+    purpose: Synthesize accessible React + Tailwind UI component blueprints and variant matrices.
+    inputs:
+      - wireframe_spec
+      - design_tokens
+    outputs:
+      - ui_design
+    requires_external_credentials: false
+  - id: figma
+    name: Figma Frame & Token Bridge
+    category: design_system
+    purpose: Export structured frame hierarchies, auto-layout grids, and CSS/JSON design token dictionaries.
+    inputs:
+      - design_system
+      - wireframe_spec
+    outputs:
+      - design_system
+      - wireframe
+    requires_external_credentials: false
+  - id: magic_patterns
+    name: MagicPatterns Exploration Engine
+    category: layout_exploration
+    purpose: Explore multi-variant interaction patterns and responsive structural layouts.
+    inputs:
+      - user_flows
+    outputs:
+      - wireframe
+    requires_external_credentials: false
+  - id: readdy
+    name: Readdy Interactive Flow Builder
+    category: prototyping
+    purpose: Generate clickable flow transitions and state machine annotations for DesignReview.
+    inputs:
+      - user_flows
+      - wireframe_spec
+    outputs:
+      - ui_design
+    requires_external_credentials: false
+  - id: uizard
+    name: Uizard Structural Wireframer
+    category: wireframing
+    purpose: Convert product stories and requirements into low/mid-fidelity spatial wireframes.
+    inputs:
+      - objective
+      - constraints
+    outputs:
+      - wireframe
+    requires_external_credentials: false

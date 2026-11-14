@@ -1,0 +1,12 @@
+[project]
+name = "cortexos-studios"
+version = "0.1.0"
+description = "CortexOS Studio SDK contracts for all execution studios."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.7.0",
+  "cortexos-types",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/cortexos_studios"]
