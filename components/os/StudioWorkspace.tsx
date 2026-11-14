@@ -206,6 +206,8 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
     agents,
     activeProject,
     artifactFeed,
+    knowledgeFeed,
+    decisionFeed,
     activityFeed,
     toolActivityFeed,
     dispatchWorkRequest,
@@ -227,6 +229,17 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
   if (!agent) return null;
 
   const studioArtifacts = artifactFeed.filter((a) => a.studioId === agentId);
+  const studioKnowledge = knowledgeFeed
+    .filter(
+      (k) =>
+        k.author.toLowerCase().includes(agent.name.toLowerCase()) ||
+        k.title.toLowerCase().includes(agent.name.toLowerCase()) ||
+        k.projectId === activeProject.id
+    )
+    .slice(0, 3);
+  const studioDecisions = decisionFeed
+    .filter((d) => d.agentId === agentId || d.studioId === agentId)
+    .slice(0, 3);
   const studioActivity = activityFeed.filter((a) => a.agentId === agentId).slice(0, 6);
   const studioToolRuns = toolActivityFeed.filter((t) => t.agentId === agentId).slice(0, 5);
   const boundRegistryTools = STUDIO_REGISTRY_TOOLS[agentId] ?? STUDIO_REGISTRY_TOOLS.design;
@@ -479,6 +492,48 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Synchronized Relevant Knowledge & Recent Studio Decisions */}
+      <div className="pt-3 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Relevant MainBrain Knowledge ({studioKnowledge.length})
+          </h3>
+          <div className="divide-y divide-white/10 border border-white/10 rounded-md bg-[#0b0e14]">
+            {studioKnowledge.map((k) => (
+              <div key={k.id} className="p-2.5 space-y-0.5">
+                <div className="font-medium text-sky-300 truncate">{k.title}</div>
+                <p className="text-[11px] text-slate-400 line-clamp-2">{k.summary}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Recent Studio Decisions ({studioDecisions.length || 1})
+          </h3>
+          <div className="divide-y divide-white/10 border border-white/10 rounded-md bg-[#0b0e14]">
+            {(studioDecisions.length > 0
+              ? studioDecisions
+              : [
+                  {
+                    id: `dec-fallback-${agent.id}`,
+                    title: agent.lastDecision,
+                    rationale: `Active studio charter decision enforced by ${agent.name}.`,
+                    status: "ratified",
+                    timestamp: agent.updatedAt,
+                  },
+                ]
+            ).map((dec) => (
+              <div key={dec.id} className="p-2.5 space-y-0.5">
+                <div className="font-medium text-violet-300 truncate">{dec.title}</div>
+                <p className="text-[11px] text-slate-400 line-clamp-2">{dec.rationale}</p>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Tools & Capabilities */}

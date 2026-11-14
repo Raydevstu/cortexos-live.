@@ -4,10 +4,9 @@ import React, { useState } from "react";
 import AgentDockV2 from "@/components/os/AgentDockV2";
 import ModeSwitcher from "@/components/os/ModeSwitcher";
 import AgentActivityLayer from "@/components/os/AgentActivityLayer";
-import MainBrainHome from "@/components/os/MainBrainHome";
+import MainBrainV2 from "@/components/os/MainBrainV2";
 import WorkspaceHost from "@/components/os/WorkspaceHost";
 import TerminalSandboxHome from "@/components/os/TerminalSandboxHome";
-import Brain3D from "@/components/Brain3D";
 import WarRoom from "@/components/WarRoom";
 import NodeInspector from "@/components/NodeInspector";
 import ArchitectureModal from "@/components/ArchitectureModal";
@@ -18,6 +17,7 @@ function CortexOSShell() {
   const {
     mode,
     setMode,
+    setMainBrainView,
     activeProjectId,
     setActiveProjectId,
     customBrainNodes,
@@ -29,7 +29,6 @@ function CortexOSShell() {
     runTerminalCommand,
   } = useAgentOS();
 
-  const [brainSearchQuery, setBrainSearchQuery] = useState("");
   const [loadedBrainNodes, setLoadedBrainNodes] = useState<BrainNode[]>([]);
 
   const handleSelectConnectedNode = async (nodeId: string) => {
@@ -94,6 +93,7 @@ function CortexOSShell() {
           onClick={(e) => {
             e.preventDefault();
             setMode("mainbrain");
+            setMainBrainView("feed");
           }}
           className="font-[family-name:var(--font-display)] text-xl font-extrabold tracking-tight text-[#e4e6eb] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-[#00ffa3]"
         >
@@ -111,30 +111,18 @@ function CortexOSShell() {
       <AgentActivityLayer />
 
       {/* ==================================================================== */}
-      {/* CENTRAL OS VIEWPORT (MainBrain / Brain Mode / War Room + Workspaces) */}
+      {/* CENTRAL OS VIEWPORT (MainBrainV2 Primary Hub / War Room Mode)        */}
       {/* ==================================================================== */}
       <div className="relative flex-1 min-h-0 flex overflow-hidden">
-        {mode === "mainbrain" && <MainBrainHome />}
-
-        {mode === "brain" && (
-          <div className="flex-1 min-w-0 h-full relative">
-            <Brain3D
-              onSelectNode={(node) => setSelectedBrainNode(node)}
-              selectedNodeId={selectedBrainNode?.id}
-              searchQuery={brainSearchQuery}
-              onSearchChange={setBrainSearchQuery}
-              customNodes={customBrainNodes}
-              projectId={activeProjectId}
-              onGraphNodesLoaded={setLoadedBrainNodes}
-            />
-          </div>
+        {mode !== "warroom" && (
+          <MainBrainV2 onGraphNodesLoaded={setLoadedBrainNodes} />
         )}
 
         {mode === "warroom" && (
           <div className="flex-1 min-w-0 h-full relative">
             <WarRoom
               onPublishNodeToBrain={publishNodeToBrain}
-              onSwitchToBrainMode={() => setMode("brain")}
+              onSwitchToBrainMode={() => setMainBrainView("graph")}
               activeProjectId={activeProjectId}
               onActiveProjectIdChange={setActiveProjectId}
             />

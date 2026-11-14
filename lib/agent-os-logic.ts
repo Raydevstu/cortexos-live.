@@ -20,6 +20,13 @@ export type AgentLifecycleStatus =
 
 export type OperatingMode = "mainbrain" | "brain" | "warroom";
 
+export type MainBrainViewMode =
+  | "feed"
+  | "graph"
+  | "artifacts"
+  | "knowledge"
+  | "decisions";
+
 export type WorkspaceMode = "drawer" | "pinned" | "docked" | "focused";
 
 export type WorkspaceKind =
@@ -63,6 +70,8 @@ export interface DockAgentState {
   currentWorkflow: string;
   runtimeState: string;
   lastDecision: string;
+  recentDecisions?: string[];
+  toolUsageSummary?: string;
   health: number;
   provider: string;
   model: string;
@@ -71,6 +80,79 @@ export interface DockAgentState {
   tools: string[];
   capabilities: string[];
   updatedAt: string;
+}
+
+export interface DecisionFeedItem {
+  id: string;
+  title: string;
+  rationale: string;
+  agentId: DockAgentId;
+  agentName: string;
+  studioId: string;
+  workflowType: string;
+  impact: "architecture" | "governance" | "design" | "security" | "release";
+  status: "ratified" | "proposed" | "conflict_resolved";
+  relatedArtifact?: string;
+  auditEntryId?: string;
+  timestamp: string;
+}
+
+export interface LibrarianRelationshipItem {
+  id: string;
+  sourceTitle: string;
+  targetTitle: string;
+  relationType: "derives_from" | "validates" | "constrains" | "implements" | "indexes";
+  confidence: number;
+  discoveredBy: string;
+  timestamp: string;
+}
+
+export interface LibrarianGraphUpdateItem {
+  id: string;
+  action: "node_indexed" | "edge_linked" | "contradiction_cleared" | "schema_verified";
+  summary: string;
+  affectedNodes: number;
+  affectedEdges: number;
+  checksumPrefix: string;
+  timestamp: string;
+}
+
+export interface LibrarianKnowledgeEvolutionItem {
+  id: string;
+  conceptTitle: string;
+  stage: "candidate" | "indexed" | "cross_linked" | "canonical";
+  version: string;
+  deltaSummary: string;
+  connectionsCount: number;
+  updatedAt: string;
+}
+
+export interface CouncilConflictItem {
+  id: string;
+  topic: string;
+  studiosInvolved: DockAgentId[];
+  tension: string;
+  resolution: string;
+  status: "resolved" | "monitoring";
+}
+
+export interface TerminalBrainSyncCompound {
+  id: string;
+  command: string;
+  agentId: DockAgentId;
+  agentName: string;
+  executionRecordId: string;
+  toolName: string;
+  durationMs: number;
+  artifactId: string;
+  artifactTitle: string;
+  knowledgeCandidateId: string;
+  knowledgeCandidateTitle: string;
+  decisionId: string;
+  decisionTitle: string;
+  auditEntryId: string;
+  checksumPrefix: string;
+  timestamp: string;
 }
 
 export interface RuntimeWorkflowRecord {
@@ -252,6 +334,10 @@ export interface TerminalTraceEntry {
   steps: TerminalTraceStep[];
   outputSummary: string;
   emittedArtifactTitle?: string;
+  emittedKnowledgeTitle?: string;
+  emittedDecisionTitle?: string;
+  auditEntryId?: string;
+  executionRecordId?: string;
   contextLayers: string[];
 }
 
@@ -1106,3 +1192,572 @@ export function dedupToolActivityFeed(
 ): ToolActivityFeedItem[] {
   return [incoming, ...feed.filter((item) => item.id !== incoming.id)].slice(0, limit);
 }
+
+export function dedupDecisionFeed(
+  feed: DecisionFeedItem[],
+  incoming: DecisionFeedItem,
+  limit = 40
+): DecisionFeedItem[] {
+  return [incoming, ...feed.filter((item) => item.id !== incoming.id)].slice(0, limit);
+}
+
+export const INITIAL_DECISION_FEED: DecisionFeedItem[] = [
+  {
+    id: "dec-seed-1",
+    title: "Enforce MainBrain as Single Unified Operating Environment",
+    rationale: "Consolidated Brain Graph, Artifact Stream, Decision Stream, and Tool Activity directly inside MainBrain so users never switch destinations.",
+    agentId: "jarvis",
+    agentName: "Jarvis",
+    studioId: "jarvis",
+    workflowType: "ProjectLifecycleWorkflow",
+    impact: "governance",
+    status: "ratified",
+    relatedArtifact: "Phase Gate Decision #PG-04",
+    auditEntryId: "aud-seed-pg04",
+    timestamp: "Just now",
+  },
+  {
+    id: "dec-seed-2",
+    title: "Enforce Zero-Pill Discipline & >= 4.5:1 Dark Obsidian Contrast",
+    rationale: "Replaced rounded status chips and card boxes with hairline stream dividers and tabular numeral metadata across MainBrain and Studio Workspaces.",
+    agentId: "design",
+    agentName: "Design",
+    studioId: "design",
+    workflowType: "DesignWorkflow",
+    impact: "design",
+    status: "ratified",
+    relatedArtifact: "Design System Tokens v1.0",
+    auditEntryId: "aud-seed-a91f4c82",
+    timestamp: "1m ago",
+  },
+  {
+    id: "dec-seed-3",
+    title: "Resolve Latency vs. Strict Schema Validation via Async Outbox",
+    rationale: "Architecture and Development studios resolved synchronous validation contention by validating schemas in ToolRegistry and streaming Graph indexing via Event SDK.",
+    agentId: "architecture",
+    agentName: "Architecture",
+    studioId: "architecture",
+    workflowType: "AgentCouncilWorkflow",
+    impact: "architecture",
+    status: "conflict_resolved",
+    relatedArtifact: "Provider & Studio Runtime OpenAPI Spec",
+    auditEntryId: "aud-seed-7e11d904",
+    timestamp: "2m ago",
+  },
+  {
+    id: "dec-seed-4",
+    title: "Approve Claim Provenance Links with Zero Contradiction Drift",
+    rationale: "Librarian verified all 4 active studio artifacts map to valid MainBrain concept nodes with cryptographic SHA-256 checksums.",
+    agentId: "librarian",
+    agentName: "Librarian",
+    studioId: "librarian",
+    workflowType: "MainBrainSyncWorkflow",
+    impact: "governance",
+    status: "ratified",
+    relatedArtifact: "Wiki Digest: OS Shell Patterns",
+    auditEntryId: "aud-seed-lib01",
+    timestamp: "3m ago",
+  },
+  {
+    id: "dec-seed-5",
+    title: "Mandate Sandboxed Workdir Isolation & Allowlist for Terminal Execution",
+    rationale: "QA and Security review locked terminal.exec to per-project .cortex-sandbox directories with SHA-256 input/output audit logging.",
+    agentId: "qa",
+    agentName: "QA",
+    studioId: "qa",
+    workflowType: "QAWorkflow",
+    impact: "security",
+    status: "ratified",
+    relatedArtifact: "WCAG & Regression Matrix #88",
+    auditEntryId: "aud-seed-91c03d12",
+    timestamp: "4m ago",
+  },
+];
+
+export const INITIAL_WORKFLOW_FEED: RuntimeWorkflowRecord[] = [
+  {
+    id: "wf-lifecycle-001",
+    projectId: "proj-solar-crm",
+    workflowType: "ProjectLifecycleWorkflow",
+    taskQueue: "jarvis-system",
+    status: "running",
+    currentStep: "Design -> Architecture Readiness Gate",
+    studioId: "jarvis",
+    startedAt: "Just now",
+  },
+  {
+    id: "wf-design-102",
+    projectId: "proj-solar-crm",
+    workflowType: "DesignWorkflow",
+    taskQueue: "studio-design",
+    status: "running",
+    currentStep: "WCAG 2.1 AA Contrast & Spatial Stream Verification",
+    studioId: "design",
+    startedAt: "1m ago",
+  },
+  {
+    id: "wf-librarian-103",
+    projectId: "proj-solar-crm",
+    workflowType: "MainBrainSyncWorkflow",
+    taskQueue: "librarian-sync",
+    status: "completed",
+    currentStep: "Entity Extraction & Graph Edge Linking",
+    studioId: "librarian",
+    startedAt: "2m ago",
+    completedAt: "Just now",
+  },
+  {
+    id: "wf-council-104",
+    projectId: "proj-solar-crm",
+    workflowType: "AgentCouncilWorkflow",
+    taskQueue: "jarvis-council",
+    status: "completed",
+    currentStep: "Multi-Studio Consensus Ratification",
+    studioId: "architecture",
+    startedAt: "3m ago",
+    completedAt: "1m ago",
+  },
+];
+
+export const INITIAL_LIBRARIAN_RELATIONSHIPS: LibrarianRelationshipItem[] = [
+  {
+    id: "rel-seed-1",
+    sourceTitle: "Design System Tokens v1.0",
+    targetTitle: "WCAG 2.1 AA Dark Obsidian Contrast Standard",
+    relationType: "implements",
+    confidence: 0.99,
+    discoveredBy: "Chief Librarian",
+    timestamp: "Just now",
+  },
+  {
+    id: "rel-seed-2",
+    sourceTitle: "Provider & Studio Runtime OpenAPI Spec",
+    targetTitle: "6-Layer Context Injection Stack",
+    relationType: "validates",
+    confidence: 0.96,
+    discoveredBy: "Chief Librarian",
+    timestamp: "1m ago",
+  },
+  {
+    id: "rel-seed-3",
+    sourceTitle: "MainBrain + Summonable Drawer Wireframes",
+    targetTitle: "MainBrain Home + Summonable Studio Constitution",
+    relationType: "derives_from",
+    confidence: 0.98,
+    discoveredBy: "Design Agent",
+    timestamp: "2m ago",
+  },
+  {
+    id: "rel-seed-4",
+    sourceTitle: "Staged Code Change: src/workspace-state-sync.ts",
+    targetTitle: "Multi-Provider Failover Chain (Cloud -> Local Ollama)",
+    relationType: "constrains",
+    confidence: 0.94,
+    discoveredBy: "Development Agent",
+    timestamp: "3m ago",
+  },
+];
+
+export const INITIAL_LIBRARIAN_GRAPH_UPDATES: LibrarianGraphUpdateItem[] = [
+  {
+    id: "gup-seed-1",
+    action: "edge_linked",
+    summary: "Linked 'Design System Tokens v1.0' (#a91f4c82) to 3 MainBrain architectural nodes.",
+    affectedNodes: 3,
+    affectedEdges: 4,
+    checksumPrefix: "a91f4c82",
+    timestamp: "Just now",
+  },
+  {
+    id: "gup-seed-2",
+    action: "contradiction_cleared",
+    summary: "Verified zero semantic drift between Product PRD v1.3.0 and Architecture OpenAPI v2.0.1.",
+    affectedNodes: 5,
+    affectedEdges: 7,
+    checksumPrefix: "7e11d904",
+    timestamp: "2m ago",
+  },
+  {
+    id: "gup-seed-3",
+    action: "node_indexed",
+    summary: "Indexed Knowledge Candidate 'OpenAPI Contract: studio-service' into MainBrain concept store.",
+    affectedNodes: 1,
+    affectedEdges: 2,
+    checksumPrefix: "4b92e10a",
+    timestamp: "3m ago",
+  },
+];
+
+export const INITIAL_LIBRARIAN_EVOLUTION: LibrarianKnowledgeEvolutionItem[] = [
+  {
+    id: "evo-seed-1",
+    conceptTitle: "MainBrain Operating System Topology",
+    stage: "canonical",
+    version: "v2.4",
+    deltaSummary: "Evolved from 5-tab dashboard into single MainBrain hub with integrated Graph, Artifacts, Knowledge, and Decisions.",
+    connectionsCount: 18,
+    updatedAt: "Just now",
+  },
+  {
+    id: "evo-seed-2",
+    conceptTitle: "6-Layer Context Injection Stack",
+    stage: "cross_linked",
+    version: "v2.1",
+    deltaSummary: "Bound live ToolRegistry execution records and SHA-256 audit hashes into Layer 3 & Layer 5.",
+    connectionsCount: 19,
+    updatedAt: "2m ago",
+  },
+  {
+    id: "evo-seed-3",
+    conceptTitle: "Sandboxed Tool Execution Protocol",
+    stage: "indexed",
+    version: "v1.3",
+    deltaSummary: "Promoted from Sprint 8 candidate to verified studio capability across Design, Architecture, Development, and QA.",
+    connectionsCount: 12,
+    updatedAt: "4m ago",
+  },
+];
+
+export const INITIAL_COUNCIL_CONFLICTS: CouncilConflictItem[] = [
+  {
+    id: "conf-seed-1",
+    topic: "Information Density vs. Visual Breathing Room in MainBrain",
+    studiosInvolved: ["design", "architecture", "product"],
+    tension: "Architecture requested 7 concurrent telemetry streams; Design flagged card overcrowding risk.",
+    resolution: "Adopted 5 integrated MainBrain view lenses (Feed, Graph, Artifacts, Knowledge, Decisions) with hairline stream dividers and zero nested cards.",
+    status: "resolved",
+  },
+  {
+    id: "conf-seed-2",
+    topic: "Terminal Command Velocity vs. Governance Gate Auditing",
+    studiosInvolved: ["development", "qa", "jarvis"],
+    tension: "Development favored immediate command execution; QA required immutable audit provenance on every run.",
+    resolution: "Synchronized Terminal Sandbox with ToolRegistry to emit Execution Record, Artifact, Knowledge Candidate, Decision, and SHA-256 Audit Entry in a single pass.",
+    status: "resolved",
+  },
+];
+
+export const INITIAL_COUNCIL_REPORT_SEED: RuntimeCouncilReport = {
+  id: "council-seed-mainbrain",
+  projectId: "proj-solar-crm",
+  objective: "Consolidate MainBrain as the primary CortexOS operating environment and verify Architecture handoff readiness",
+  consensusSummary: "Consensus Achieved (96% confidence): MainBrain is ratified as the single source of truth combining Feed, 3D Brain Graph, Artifacts, Knowledge, and Council Decisions.",
+  opinions: [
+    {
+      agentId: "design",
+      studioId: "design",
+      opinion: "MainBrain stream hierarchy satisfies WCAG 2.1 AA contrast (18.33:1) and eliminates dashboard card clutter.",
+      recommendation: "Ratify 5-view MainBrain switcher and keep Studio Workspaces summonable from Agent Dock.",
+      risk: "Ensure 3D Graph view preserves context bar when toggled inside MainBrain.",
+      confidence: 0.98,
+    },
+    {
+      agentId: "architecture",
+      studioId: "architecture",
+      opinion: "Event SDK WebSocket and ToolRegistry pipelines deterministically feed MainBrain without backend contract changes.",
+      recommendation: "Approve Architecture phase transition with async Librarian relationship indexing.",
+      risk: "Monitor WebSocket reconnect backoff under local provider failover.",
+      confidence: 0.96,
+    },
+    {
+      agentId: "development",
+      studioId: "development",
+      opinion: "Terminal Sandbox commands now compound directly into Execution Record, Artifact, Knowledge Candidate, Decision, and Audit Entry.",
+      recommendation: "Proceed with unified Workspace Intelligence panel across all summoned studios.",
+      risk: "Keep terminal command execution bounded to 5,000ms sandbox timeout.",
+      confidence: 0.95,
+    },
+    {
+      agentId: "qa",
+      studioId: "qa",
+      opinion: "All 33 automated unit/integration checks pass; SHA-256 audit hashes verified.",
+      recommendation: "Enforce continuous verification across Feed, Graph, Artifacts, Knowledge, and Decision views.",
+      risk: "Verify zero console errors during rapid view switching.",
+      confidence: 0.95,
+    },
+  ],
+  decisions: [
+    "MainBrain serves as the primary operating environment with integrated Graph, Artifacts, Knowledge, and Decisions.",
+    "Every Terminal Sandbox execution compounds into Execution Record, Artifact, Knowledge Candidate, Decision, and Audit Entry.",
+    "Summoned Agent Workspaces display contextual work, workflow, artifacts, knowledge, tool runs, and decisions inline.",
+  ],
+  risks: [
+    "High stream velocity during multi-studio dispatch -> Mitigated via Pause Feed control and view lenses.",
+    "Cloud provider rate limit spike -> Mitigated via automatic capability router failover to local Ollama.",
+  ],
+  workflowId: "wf-council-104",
+  createdAt: "Just now",
+};
+
+export interface EnrichedAgentTeammateTelemetry {
+  agent: DockAgentState;
+  recentDecisions: string[];
+  recentTools: ToolActivityFeedItem[];
+  toolUsageSummary: string;
+}
+
+export function deriveAgentTeammateTelemetry(
+  agent: DockAgentState,
+  toolActivityFeed: ToolActivityFeedItem[],
+  decisionFeed: DecisionFeedItem[]
+): EnrichedAgentTeammateTelemetry {
+  const agentTools = toolActivityFeed.filter((t) => t.agentId === agent.id);
+  const agentDecisions = decisionFeed
+    .filter((d) => d.agentId === agent.id)
+    .map((d) => d.title);
+
+  const combinedDecisions = Array.from(
+    new Set([
+      agent.lastDecision,
+      ...(agent.recentDecisions ?? []),
+      ...agentDecisions,
+    ].filter(Boolean))
+  ).slice(0, 3);
+
+  const latestTool = agentTools[0];
+  const toolUsageSummary = latestTool
+    ? `${latestTool.toolName} (${latestTool.executionTimeMs}ms · ${latestTool.status})`
+    : `${agent.tools.slice(0, 2).join(", ")} (ready)`;
+
+  return {
+    agent,
+    recentDecisions: combinedDecisions,
+    recentTools: agentTools.slice(0, 3),
+    toolUsageSummary,
+  };
+}
+
+export interface WorkspaceIntelligenceSnapshot {
+  agentId: DockAgentId;
+  currentWork: string;
+  activeWorkRequests: RuntimeWorkRequestRecord[];
+  currentWorkflow: string;
+  matchingWorkflows: RuntimeWorkflowRecord[];
+  generatedArtifacts: ArtifactFeedItem[];
+  relevantKnowledge: KnowledgeFeedItem[];
+  toolActivity: ToolActivityFeedItem[];
+  recentDecisions: DecisionFeedItem[];
+}
+
+export function deriveWorkspaceIntelligence(
+  agentId: DockAgentId,
+  params: {
+    agents: DockAgentState[];
+    workRequests: RuntimeWorkRequestRecord[];
+    workflows: RuntimeWorkflowRecord[];
+    artifactFeed: ArtifactFeedItem[];
+    knowledgeFeed: KnowledgeFeedItem[];
+    toolActivityFeed: ToolActivityFeedItem[];
+    decisionFeed: DecisionFeedItem[];
+  }
+): WorkspaceIntelligenceSnapshot {
+  const agent =
+    params.agents.find((a) => a.id === agentId) ??
+    DOCK_AGENTS_SEED.find((a) => a.id === agentId) ??
+    DOCK_AGENTS_SEED[0];
+
+  const activeWorkRequests = params.workRequests.filter((wr) => wr.studioId === agentId);
+  const matchingWorkflows = params.workflows.filter(
+    (wf) =>
+      wf.studioId === agentId ||
+      wf.workflowType.toLowerCase().includes(agentId.toLowerCase()) ||
+      wf.workflowType === agent.currentWorkflow
+  );
+  const generatedArtifacts = params.artifactFeed.filter((art) => art.studioId === agentId);
+
+  const agentLower = agent.name.toLowerCase();
+  const relevantKnowledge = params.knowledgeFeed.filter(
+    (k) =>
+      k.author.toLowerCase().includes(agentLower) ||
+      k.title.toLowerCase().includes(agentLower) ||
+      k.summary.toLowerCase().includes(agentLower)
+  );
+
+  const toolActivity = params.toolActivityFeed.filter((t) => t.agentId === agentId);
+  const recentDecisions = params.decisionFeed.filter((d) => d.agentId === agentId);
+
+  return {
+    agentId,
+    currentWork: agent.currentTask,
+    activeWorkRequests,
+    currentWorkflow: agent.currentWorkflow,
+    matchingWorkflows,
+    generatedArtifacts,
+    relevantKnowledge:
+      relevantKnowledge.length > 0 ? relevantKnowledge : params.knowledgeFeed.slice(0, 2),
+    toolActivity,
+    recentDecisions:
+      recentDecisions.length > 0
+        ? recentDecisions
+        : [
+            {
+              id: `dec-fallback-${agent.id}`,
+              title: agent.lastDecision,
+              rationale: `Active operational decision enforced by ${agent.name} (${agent.role}).`,
+              agentId: agent.id,
+              agentName: agent.name,
+              studioId: agent.studioId,
+              workflowType: agent.currentWorkflow,
+              impact: "governance",
+              status: "ratified",
+              relatedArtifact: agent.currentArtifact || agent.lastArtifact,
+              timestamp: agent.updatedAt,
+            },
+          ],
+  };
+}
+
+export function buildTerminalBrainSyncCompound(params: {
+  command: string;
+  agent: DockAgentState;
+  projectId: string;
+  toolName?: string;
+  durationMs?: number;
+  artifact?: ArtifactFeedItem;
+  timestamp?: string;
+}): {
+  compound: TerminalBrainSyncCompound;
+  toolItem: ToolActivityFeedItem;
+  artifactItem: ArtifactFeedItem;
+  knowledgeItem: KnowledgeFeedItem;
+  decisionItem: DecisionFeedItem;
+  relationshipItem: LibrarianRelationshipItem;
+  graphUpdateItem: LibrarianGraphUpdateItem;
+} {
+  const nowTs =
+    params.timestamp ??
+    new Date().toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const checksumPrefix = suffix.replace(/[^a-f0-9]/gi, "a").slice(0, 8).padEnd(8, "0");
+  const executedTool = params.toolName || params.agent.tools[0] || "terminal.exec";
+  const durationMs = params.durationMs ?? 18;
+
+  const artifactItem: ArtifactFeedItem = params.artifact ?? {
+    id: `art-term-${suffix}`,
+    title: `${params.agent.name} Deliverable: ${params.command.slice(0, 44)}`,
+    artifactType: `${params.agent.id}_output`,
+    studioId: params.agent.id,
+    status: "indexed",
+    version: "1.0.0",
+    projectId: params.projectId,
+    checksumPrefix,
+    summary: `Generated via Terminal Sandbox command "${params.command}" and synchronized into MainBrain.`,
+    updatedAt: nowTs,
+  };
+
+  const knowledgeTitle = `Knowledge Candidate · ${artifactItem.title}`;
+  const knowledgeItem: KnowledgeFeedItem = {
+    id: `kf-term-${suffix}`,
+    kind: "concept",
+    title: knowledgeTitle,
+    summary: `Synthesized from terminal execution "${params.command}" by ${params.agent.name} (tool=${executedTool}, sha256=${artifactItem.checksumPrefix}).`,
+    projectId: params.projectId,
+    author: `${params.agent.name} · Librarian Sync`,
+    updatedAt: nowTs,
+    connectionsCount: 5,
+  };
+
+  const decisionTitle = `Ratified "${params.command}" output for ${params.agent.name} Studio`;
+  const auditEntryId = `aud-${artifactItem.checksumPrefix}-${suffix.slice(0, 4)}`;
+
+  const decisionItem: DecisionFeedItem = {
+    id: `dec-term-${suffix}`,
+    title: decisionTitle,
+    rationale: `Terminal Sandbox execution verified via ${executedTool} (${durationMs}ms) and linked to artifact "${artifactItem.title}".`,
+    agentId: params.agent.id,
+    agentName: params.agent.name,
+    studioId: params.agent.studioId,
+    workflowType: params.agent.currentWorkflow,
+    impact:
+      params.agent.id === "design"
+        ? "design"
+        : params.agent.id === "architecture"
+        ? "architecture"
+        : params.agent.id === "qa"
+        ? "security"
+        : "governance",
+    status: "ratified",
+    relatedArtifact: artifactItem.title,
+    auditEntryId,
+    timestamp: nowTs,
+  };
+
+  const toolItem: ToolActivityFeedItem = {
+    id: `texec-term-${suffix}`,
+    toolName: executedTool,
+    category: executedTool.startsWith("github.")
+      ? "github"
+      : executedTool.startsWith("fs.")
+      ? "filesystem"
+      : executedTool.startsWith("docs.")
+      ? "documentation"
+      : "terminal",
+    executionTimeMs: durationMs,
+    agentId: params.agent.id,
+    agentName: params.agent.name,
+    studioId: params.agent.id,
+    status: "completed",
+    inputSummary: params.command,
+    result: `Executed "${params.command}" via ${params.agent.name} (${durationMs}ms) -> synced Artifact, Knowledge, Decision & Audit.`,
+    artifactId: artifactItem.id,
+    artifactProduced: artifactItem.title,
+    knowledgeCandidateTitle: knowledgeTitle,
+    auditEntryId,
+    checksumPrefix: artifactItem.checksumPrefix,
+    timestamp: nowTs,
+  };
+
+  const relationshipItem: LibrarianRelationshipItem = {
+    id: `rel-term-${suffix}`,
+    sourceTitle: artifactItem.title,
+    targetTitle: knowledgeTitle,
+    relationType: "derives_from",
+    confidence: 0.97,
+    discoveredBy: "Chief Librarian",
+    timestamp: nowTs,
+  };
+
+  const graphUpdateItem: LibrarianGraphUpdateItem = {
+    id: `gup-term-${suffix}`,
+    action: "node_indexed",
+    summary: `Indexed terminal execution "${params.command}" -> linked Artifact (#${artifactItem.checksumPrefix}), Knowledge Candidate, and Decision node.`,
+    affectedNodes: 3,
+    affectedEdges: 3,
+    checksumPrefix: artifactItem.checksumPrefix,
+    timestamp: nowTs,
+  };
+
+  const compound: TerminalBrainSyncCompound = {
+    id: `sync-${suffix}`,
+    command: params.command,
+    agentId: params.agent.id,
+    agentName: params.agent.name,
+    executionRecordId: toolItem.id,
+    toolName: executedTool,
+    durationMs,
+    artifactId: artifactItem.id,
+    artifactTitle: artifactItem.title,
+    knowledgeCandidateId: knowledgeItem.id,
+    knowledgeCandidateTitle: knowledgeItem.title,
+    decisionId: decisionItem.id,
+    decisionTitle: decisionItem.title,
+    auditEntryId,
+    checksumPrefix: artifactItem.checksumPrefix,
+    timestamp: nowTs,
+  };
+
+  return {
+    compound,
+    toolItem,
+    artifactItem,
+    knowledgeItem,
+    decisionItem,
+    relationshipItem,
+    graphUpdateItem,
+  };
+}
+

@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import {
   Maximize2,
   Minimize2,
@@ -11,8 +11,19 @@ import {
   Bot,
   Cpu,
   Terminal,
+  BookOpen,
+  Layers,
+  Wrench,
+  Scale,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
-import type { DockAgentState, WorkspaceWindowState } from "@/lib/agent-os-logic";
+import {
+  deriveWorkspaceIntelligence,
+  type DockAgentState,
+  type WorkspaceWindowState,
+} from "@/lib/agent-os-logic";
+import { useAgentOS } from "@/lib/agent-os-store";
 import { getStatusVisual } from "@/components/os/AgentDockV2";
 
 interface AgentWorkspaceProps {
@@ -36,9 +47,32 @@ export default function AgentWorkspace({
   onRunInTerminal,
   children,
 }: AgentWorkspaceProps) {
+  const {
+    agents,
+    workRequests,
+    workflows,
+    artifactFeed,
+    knowledgeFeed,
+    toolActivityFeed,
+    decisionFeed,
+    setMainBrainView,
+  } = useAgentOS();
+
+  const [intelExpanded, setIntelExpanded] = useState(true);
+
   const vis = getStatusVisual(agent.status);
   const isPinned = windowState.mode === "pinned";
   const isFocused = windowState.mode === "focused";
+
+  const intel = deriveWorkspaceIntelligence(agent.id, {
+    agents,
+    workRequests,
+    workflows,
+    artifactFeed,
+    knowledgeFeed,
+    toolActivityFeed,
+    decisionFeed,
+  });
 
   return (
     <section
@@ -130,42 +164,138 @@ export default function AgentWorkspace({
           </div>
         </div>
 
-        {/* Live Telemetry Strip inside Workspace Chrome */}
-        <div className="mt-2.5 pt-2 border-t border-white/10 space-y-1 text-[11px] text-slate-400">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Cpu className="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true" />
-              <span className="text-slate-300 truncate">
-                Task: {agent.currentTask}
-              </span>
-            </div>
-            <span className={`font-mono ${vis.textClass} shrink-0`}>
-              {agent.runtimeState || vis.label}
+        {/* Synchronized MainBrain Workspace Intelligence Header Strip */}
+        <div
+          data-testid={`workspace-intelligence-${agent.id}`}
+          className="mt-2.5 pt-2 border-t border-white/10 space-y-1.5 text-[11px]"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-[#00ffa3] flex items-center gap-1.5">
+              <Cpu className="w-3 h-3 shrink-0" aria-hidden="true" />
+              <span>MainBrain Workspace Intelligence (Synchronized)</span>
             </span>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 font-mono">
-            <span className="text-sky-300 truncate">
-              Workflow: {agent.currentWorkflow}
-            </span>
-            <span className="text-teal-300 truncate max-w-[220px]">
-              Artifact: {agent.currentArtifact || agent.lastArtifact}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-slate-300 truncate min-w-0">
-              Last Decision: {agent.lastDecision}
-            </span>
-            {onRunInTerminal && (
+            <div className="flex items-center gap-2 shrink-0">
+              {onRunInTerminal && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onRunInTerminal(`@${agent.id} inspect current state and propose next action`)
+                  }
+                  className="inline-flex items-center gap-1 text-[11px] text-[#00ffa3] hover:underline whitespace-nowrap"
+                >
+                  <Terminal className="w-3 h-3" aria-hidden="true" />
+                  <span>Send to Terminal</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => onRunInTerminal(`@${agent.id} inspect current state and propose next action`)}
-                className="inline-flex items-center gap-1 text-[11px] text-[#00ffa3] hover:underline whitespace-nowrap shrink-0"
+                onClick={() => setIntelExpanded(!intelExpanded)}
+                aria-expanded={intelExpanded}
+                className="inline-flex items-center gap-1 text-slate-400 hover:text-white"
               >
-                <Terminal className="w-3 h-3" aria-hidden="true" />
-                <span>Send to Terminal</span>
+                <span>{intelExpanded ? "Hide Intel" : "Show Intel"}</span>
+                {intelExpanded ? (
+                  <ChevronUp className="w-3 h-3" aria-hidden="true" />
+                ) : (
+                  <ChevronDown className="w-3 h-3" aria-hidden="true" />
+                )}
               </button>
-            )}
+            </div>
           </div>
+
+          {/* 1. Current Work & 2. Current Workflow */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-slate-300">
+            <div className="truncate" title={intel.currentWork}>
+              <span className="text-slate-400">Current Work: </span>
+              <span className="text-white font-medium">{intel.currentWork}</span>
+            </div>
+            <div className="font-mono truncate sm:text-right" title={intel.currentWorkflow}>
+              <span className="text-slate-400">Workflow: </span>
+              <span className="text-sky-300">{intel.currentWorkflow}</span>
+            </div>
+          </div>
+
+          {intelExpanded && (
+            <div className="pt-2 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+              {/* 3. Generated Artifacts */}
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="inline-flex items-center gap-1 font-medium text-teal-300">
+                    <Layers className="w-3 h-3" aria-hidden="true" />
+                    <span>Generated Artifacts ({intel.generatedArtifacts.length})</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMainBrainView("artifacts")}
+                    className="text-[10px] text-slate-400 hover:text-[#00ffa3] underline"
+                  >
+                    View in Brain
+                  </button>
+                </div>
+                <div className="text-slate-200 truncate">
+                  {intel.generatedArtifacts[0]?.title ?? agent.currentArtifact ?? agent.lastArtifact}
+                </div>
+              </div>
+
+              {/* 4. Relevant Knowledge */}
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="inline-flex items-center gap-1 font-medium text-sky-300">
+                    <BookOpen className="w-3 h-3" aria-hidden="true" />
+                    <span>Relevant Knowledge ({intel.relevantKnowledge.length})</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMainBrainView("knowledge")}
+                    className="text-[10px] text-slate-400 hover:text-[#00ffa3] underline"
+                  >
+                    View in Brain
+                  </button>
+                </div>
+                <div className="text-slate-200 truncate">
+                  {intel.relevantKnowledge[0]?.title ?? "6-Layer Context Injection Stack"}
+                </div>
+              </div>
+
+              {/* 5. Tool Activity */}
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="inline-flex items-center gap-1 font-medium text-amber-300">
+                    <Wrench className="w-3 h-3" aria-hidden="true" />
+                    <span>Tool Activity ({intel.toolActivity.length})</span>
+                  </span>
+                  <span className="font-mono text-[10px] text-slate-400 tabular-nums">
+                    {intel.toolActivity[0] ? `${intel.toolActivity[0].executionTimeMs}ms` : "ready"}
+                  </span>
+                </div>
+                <div className="font-mono text-slate-200 truncate">
+                  {intel.toolActivity[0]
+                    ? `${intel.toolActivity[0].toolName} -> ${intel.toolActivity[0].artifactProduced}`
+                    : `Bound: ${agent.tools.slice(0, 3).join(", ")}`}
+                </div>
+              </div>
+
+              {/* 6. Recent Decisions */}
+              <div className="space-y-0.5 min-w-0">
+                <div className="flex items-center justify-between text-slate-400">
+                  <span className="inline-flex items-center gap-1 font-medium text-violet-300">
+                    <Scale className="w-3 h-3" aria-hidden="true" />
+                    <span>Recent Decisions ({intel.recentDecisions.length})</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMainBrainView("decisions")}
+                    className="text-[10px] text-slate-400 hover:text-[#00ffa3] underline"
+                  >
+                    View in Brain
+                  </button>
+                </div>
+                <div className="text-slate-200 truncate">
+                  {intel.recentDecisions[0]?.title ?? agent.lastDecision}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -174,3 +304,4 @@ export default function AgentWorkspace({
     </section>
   );
 }
+

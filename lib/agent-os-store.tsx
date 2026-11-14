@@ -10,15 +10,24 @@ import React, {
   useState,
 } from "react";
 import {
+  buildTerminalBrainSyncCompound,
   closeWorkspaceState,
   dedupActivityFeed,
+  dedupDecisionFeed,
   dedupToolActivityFeed,
   DOCK_AGENTS_SEED,
   INITIAL_ACTIVITY_FEED,
   INITIAL_ARTIFACT_FEED,
+  INITIAL_COUNCIL_CONFLICTS,
+  INITIAL_COUNCIL_REPORT_SEED,
+  INITIAL_DECISION_FEED,
   INITIAL_KNOWLEDGE_FEED,
+  INITIAL_LIBRARIAN_EVOLUTION,
+  INITIAL_LIBRARIAN_GRAPH_UPDATES,
+  INITIAL_LIBRARIAN_RELATIONSHIPS,
   INITIAL_TERMINAL_HISTORY,
   INITIAL_TOOL_ACTIVITY_FEED,
+  INITIAL_WORKFLOW_FEED,
   mergeAgentTelemetry,
   parseTerminalCommand,
   PROJECT_CONTEXTS_SEED,
@@ -28,9 +37,15 @@ import {
   summonWorkspaceState,
   type AgentActivityEvent,
   type ArtifactFeedItem,
+  type CouncilConflictItem,
+  type DecisionFeedItem,
   type DockAgentId,
   type DockAgentState,
   type KnowledgeFeedItem,
+  type LibrarianGraphUpdateItem,
+  type LibrarianKnowledgeEvolutionItem,
+  type LibrarianRelationshipItem,
+  type MainBrainViewMode,
   type OperatingMode,
   type PendingApprovalItem,
   type ProjectContextSummary,
@@ -40,6 +55,7 @@ import {
   type RuntimePresenceSnapshot,
   type RuntimeWorkRequestRecord,
   type RuntimeWorkflowRecord,
+  type TerminalBrainSyncCompound,
   type TerminalTraceEntry,
   type TerminalTraceStep,
   type ToolActivityFeedItem,
@@ -49,10 +65,35 @@ import {
   type WsConnectionStatus,
 } from "@/lib/agent-os-logic";
 import type { BrainNode } from "@/lib/knowledge-data";
+import {
+  CORTEXOS_MISSIONS,
+  WAR_ROOM_PRESETS,
+  WAR_ROOM_STORAGE_KEY,
+  activateWarRoomPanel as activateWarRoomPanelPure,
+  clampZoneDimensions,
+  createDefaultWarRoomLayout,
+  deriveWarRoomGoldenRuleTelemetry,
+  deserializeWarRoomLayout,
+  moveWarRoomPanelToZone as moveWarRoomPanelToZonePure,
+  serializeWarRoomLayout,
+  setWarRoomMaximizedPanel as setWarRoomMaximizedPanelPure,
+  toggleWarRoomPanelVisibility as toggleWarRoomPanelVisibilityPure,
+  toggleWarRoomZoneCollapsed as toggleWarRoomZoneCollapsedPure,
+  type DisclosureLevel,
+  type DockZoneId,
+  type MissionId,
+  type WarRoomGoldenRuleSnapshot,
+  type WarRoomLayoutState,
+  type WarRoomPanelId,
+  type WarRoomPresetId,
+  type ZoneDimensions,
+} from "@/lib/war-room/workspace-state";
 
 interface AgentOSContextValue {
   mode: OperatingMode;
   setMode: (mode: OperatingMode) => void;
+  mainBrainView: MainBrainViewMode;
+  setMainBrainView: (view: MainBrainViewMode) => void;
   activeProjectId: string;
   setActiveProjectId: (projectId: string) => void;
   projects: ProjectContextSummary[];
@@ -77,6 +118,13 @@ interface AgentOSContextValue {
   artifactFeed: ArtifactFeedItem[];
   activityFeed: AgentActivityEvent[];
   toolActivityFeed: ToolActivityFeedItem[];
+  decisionFeed: DecisionFeedItem[];
+
+  librarianRelationships: LibrarianRelationshipItem[];
+  librarianGraphUpdates: LibrarianGraphUpdateItem[];
+  librarianEvolution: LibrarianKnowledgeEvolutionItem[];
+  councilConflicts: CouncilConflictItem[];
+  latestTerminalCompound: TerminalBrainSyncCompound | null;
 
   workflows: RuntimeWorkflowRecord[];
   workRequests: RuntimeWorkRequestRecord[];
@@ -129,12 +177,28 @@ interface AgentOSContextValue {
   setSelectedBrainNode: (node: BrainNode | null) => void;
   isBlueprintOpen: boolean;
   setIsBlueprintOpen: (open: boolean) => void;
+
+  // Step 1: War Room Workspace State Foundation (Single Source of Truth)
+  disclosureLevel: DisclosureLevel;
+  setDisclosureLevel: (level: DisclosureLevel) => void;
+  activeMission: MissionId;
+  setActiveMission: (mission: MissionId) => void;
+  warRoomLayout: WarRoomLayoutState;
+  goldenRuleTelemetry: WarRoomGoldenRuleSnapshot;
+  applyWarRoomPreset: (presetId: WarRoomPresetId) => void;
+  activateWarRoomPanel: (panelId: WarRoomPanelId) => void;
+  moveWarRoomPanelToZone: (panelId: WarRoomPanelId, targetZoneId: DockZoneId) => void;
+  toggleWarRoomPanelVisibility: (panelId: WarRoomPanelId) => void;
+  toggleWarRoomZoneCollapsed: (zoneId: DockZoneId) => void;
+  setWarRoomMaximizedPanel: (panelId: WarRoomPanelId | null) => void;
+  commitWarRoomZoneDimensions: (partial: Partial<ZoneDimensions>) => void;
 }
 
 const AgentOSContext = createContext<AgentOSContextValue | null>(null);
 
 export function AgentOSProvider({ children }: { children: React.ReactNode }) {
-  const [mode, setMode] = useState<OperatingMode>("mainbrain");
+  const [modeState, setModeState] = useState<OperatingMode>("mainbrain");
+  const [mainBrainView, setMainBrainViewState] = useState<MainBrainViewMode>("feed");
   const [projects, setProjects] = useState<ProjectContextSummary[]>(PROJECT_CONTEXTS_SEED);
   const [activeProjectId, setActiveProjectId] = useState<string>("proj-solar-crm");
 
@@ -148,12 +212,25 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
   const [activityFeed, setActivityFeed] = useState<AgentActivityEvent[]>(INITIAL_ACTIVITY_FEED);
   const [toolActivityFeed, setToolActivityFeed] =
     useState<ToolActivityFeedItem[]>(INITIAL_TOOL_ACTIVITY_FEED);
+  const [decisionFeed, setDecisionFeed] =
+    useState<DecisionFeedItem[]>(INITIAL_DECISION_FEED);
 
-  const [workflows, setWorkflows] = useState<RuntimeWorkflowRecord[]>([]);
+  const [librarianRelationships, setLibrarianRelationships] =
+    useState<LibrarianRelationshipItem[]>(INITIAL_LIBRARIAN_RELATIONSHIPS);
+  const [librarianGraphUpdates, setLibrarianGraphUpdates] =
+    useState<LibrarianGraphUpdateItem[]>(INITIAL_LIBRARIAN_GRAPH_UPDATES);
+  const [librarianEvolution, setLibrarianEvolution] =
+    useState<LibrarianKnowledgeEvolutionItem[]>(INITIAL_LIBRARIAN_EVOLUTION);
+  const [councilConflicts] = useState<CouncilConflictItem[]>(INITIAL_COUNCIL_CONFLICTS);
+  const [latestTerminalCompound, setLatestTerminalCompound] =
+    useState<TerminalBrainSyncCompound | null>(null);
+
+  const [workflows, setWorkflows] = useState<RuntimeWorkflowRecord[]>(INITIAL_WORKFLOW_FEED);
   const [workRequests, setWorkRequests] = useState<RuntimeWorkRequestRecord[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApprovalItem[]>([]);
   const [risks, setRisks] = useState<RiskAlertItem[]>([]);
-  const [councilReport, setCouncilReport] = useState<RuntimeCouncilReport | null>(null);
+  const [councilReport, setCouncilReport] =
+    useState<RuntimeCouncilReport | null>(INITIAL_COUNCIL_REPORT_SEED);
 
   const [wsStatus, setWsStatus] = useState<WsConnectionStatus>("connecting");
   const [streamPaused, setStreamPaused] = useState<boolean>(false);
@@ -170,9 +247,136 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
   const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
   const [isBlueprintOpen, setIsBlueprintOpen] = useState<boolean>(false);
 
+  // Step 1: War Room Workspace State Foundation
+  const [disclosureLevel, setDisclosureLevel] = useState<DisclosureLevel>("operator");
+  const [activeMission, setActiveMissionState] = useState<MissionId>("build-software");
+  const [warRoomLayout, setWarRoomLayout] = useState<WarRoomLayoutState>(() =>
+    createDefaultWarRoomLayout("mission-execution")
+  );
+
+  // Hydrate War Room layout from localStorage once on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let active = true;
+    Promise.resolve().then(() => {
+      if (!active) return;
+      try {
+        const saved = window.localStorage.getItem(WAR_ROOM_STORAGE_KEY);
+        if (saved) {
+          setWarRoomLayout(deserializeWarRoomLayout(saved));
+        }
+      } catch {
+        // Ignore storage read errors
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const persistAndSetWarRoomLayout = useCallback(
+    (updater: (prev: WarRoomLayoutState) => WarRoomLayoutState) => {
+      setWarRoomLayout((prev) => {
+        const next = updater(prev);
+        if (typeof window !== "undefined") {
+          try {
+            window.localStorage.setItem(WAR_ROOM_STORAGE_KEY, serializeWarRoomLayout(next));
+          } catch {
+            // Ignore storage write errors
+          }
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const applyWarRoomPreset = useCallback(
+    (presetId: WarRoomPresetId) => {
+      persistAndSetWarRoomLayout((prev) => {
+        const preset = WAR_ROOM_PRESETS[presetId] ?? WAR_ROOM_PRESETS["mission-execution"];
+        return preset.createLayout(prev.dimensions);
+      });
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
+  const setActiveMission = useCallback(
+    (missionId: MissionId) => {
+      setActiveMissionState(missionId);
+      const missionDef = CORTEXOS_MISSIONS[missionId];
+      if (missionDef) {
+        applyWarRoomPreset(missionDef.defaultPreset);
+      }
+    },
+    [applyWarRoomPreset]
+  );
+
+  const activateWarRoomPanel = useCallback(
+    (panelId: WarRoomPanelId) => {
+      persistAndSetWarRoomLayout((prev) => activateWarRoomPanelPure(prev, panelId));
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
+  const moveWarRoomPanelToZone = useCallback(
+    (panelId: WarRoomPanelId, targetZoneId: DockZoneId) => {
+      persistAndSetWarRoomLayout((prev) =>
+        moveWarRoomPanelToZonePure(prev, panelId, targetZoneId)
+      );
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
+  const toggleWarRoomPanelVisibility = useCallback(
+    (panelId: WarRoomPanelId) => {
+      persistAndSetWarRoomLayout((prev) => toggleWarRoomPanelVisibilityPure(prev, panelId));
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
+  const toggleWarRoomZoneCollapsed = useCallback(
+    (zoneId: DockZoneId) => {
+      persistAndSetWarRoomLayout((prev) => toggleWarRoomZoneCollapsedPure(prev, zoneId));
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
+  const setWarRoomMaximizedPanel = useCallback(
+    (panelId: WarRoomPanelId | null) => {
+      persistAndSetWarRoomLayout((prev) => setWarRoomMaximizedPanelPure(prev, panelId));
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
+  const commitWarRoomZoneDimensions = useCallback(
+    (partial: Partial<ZoneDimensions>) => {
+      persistAndSetWarRoomLayout((prev) => ({
+        ...prev,
+        dimensions: clampZoneDimensions(partial, prev.dimensions),
+      }));
+    },
+    [persistAndSetWarRoomLayout]
+  );
+
   useEffect(() => {
     streamPausedRef.current = streamPaused;
   }, [streamPaused]);
+
+  // Brain Graph is now an integrated view inside MainBrain rather than a separate destination
+  const setMode = useCallback((nextMode: OperatingMode) => {
+    if (nextMode === "brain") {
+      setModeState("mainbrain");
+      setMainBrainViewState("graph");
+      return;
+    }
+    setModeState(nextMode);
+  }, []);
+
+  const setMainBrainView = useCallback((nextView: MainBrainViewMode) => {
+    setModeState("mainbrain");
+    setMainBrainViewState(nextView);
+  }, []);
 
   const setSelectedProvider = useCallback((providerId: ProviderId) => {
     setSelectedProviderState(providerId);
@@ -192,7 +396,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     if (Array.isArray(snap.agents) && snap.agents.length > 0) {
       setAgents(snap.agents);
     }
-    if (Array.isArray(snap.workflows)) {
+    if (Array.isArray(snap.workflows) && snap.workflows.length > 0) {
       setWorkflows(snap.workflows);
     }
     if (Array.isArray(snap.workRequests)) {
@@ -204,8 +408,23 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     if (Array.isArray(snap.risks)) {
       setRisks(snap.risks);
     }
-    if (snap.councilReport !== undefined) {
+    if (snap.councilReport) {
       setCouncilReport(snap.councilReport);
+      if (Array.isArray(snap.councilReport.decisions) && snap.councilReport.decisions.length > 0) {
+        const councilDec: DecisionFeedItem = {
+          id: `dec-council-${snap.councilReport.id}`,
+          title: snap.councilReport.decisions[0],
+          rationale: snap.councilReport.consensusSummary,
+          agentId: "jarvis",
+          agentName: "Agent Council",
+          studioId: "jarvis",
+          workflowType: "AgentCouncilWorkflow",
+          impact: "governance",
+          status: "ratified",
+          timestamp: snap.councilReport.createdAt || "Just now",
+        };
+        setDecisionFeed((prev) => dedupDecisionFeed(prev, councilDec, 40));
+      }
     }
     if (!streamPausedRef.current) {
       if (Array.isArray(snap.activityFeed) && snap.activityFeed.length > 0) {
@@ -245,7 +464,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeProjectId, applySnapshot]);
 
-  // Real-time WebSocket subscriber replacing mocked setInterval simulation
+  // Real-time WebSocket subscriber
   useEffect(() => {
     let active = true;
     let ws: WebSocket | null = null;
@@ -453,6 +672,50 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
 
   const ingestKnowledgeItem = useCallback(
     (item: Omit<KnowledgeFeedItem, "id" | "updatedAt">) => {
+      const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const created: KnowledgeFeedItem = {
+        ...item,
+        id: `kf-local-${Date.now()}`,
+        updatedAt: now,
+      };
+      setKnowledgeFeed((prev) => [created, ...prev]);
+      setLibrarianRelationships((prev) => [
+        {
+          id: `rel-local-${Date.now()}`,
+          sourceTitle: item.title,
+          targetTitle: "MainBrain Operating System Topology",
+          relationType: "indexes",
+          confidence: 0.97,
+          discoveredBy: item.author || "Chief Librarian",
+          timestamp: now,
+        },
+        ...prev,
+      ]);
+      setLibrarianGraphUpdates((prev) => [
+        {
+          id: `gup-local-${Date.now()}`,
+          action: "node_indexed",
+          summary: `Indexed knowledge object "${item.title}" (${item.kind}) into MainBrain graph.`,
+          affectedNodes: 1,
+          affectedEdges: item.connectionsCount || 3,
+          checksumPrefix: Math.random().toString(16).slice(2, 10),
+          timestamp: now,
+        },
+        ...prev,
+      ]);
+      setLibrarianEvolution((prev) => [
+        {
+          id: `evo-local-${Date.now()}`,
+          conceptTitle: item.title,
+          stage: "indexed",
+          version: "v1.0",
+          deltaSummary: item.summary,
+          connectionsCount: item.connectionsCount || 3,
+          updatedAt: now,
+        },
+        ...prev,
+      ]);
+
       void fetch("/api/runtime/knowledge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -485,12 +748,30 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
         if (res.ok) {
           const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
           applySnapshot(data.snapshot);
+          setDecisionFeed((prev) =>
+            dedupDecisionFeed(
+              prev,
+              {
+                id: `dec-phase-${Date.now()}`,
+                title: `Advanced Project Lifecycle Phase to ${nextPhase.toUpperCase()}`,
+                rationale: `Jarvis Phase Engine verified gate readiness and promoted ${activeProject.name} to ${nextPhase}.`,
+                agentId: "jarvis",
+                agentName: "Jarvis",
+                studioId: "jarvis",
+                workflowType: "ProjectLifecycleWorkflow",
+                impact: "governance",
+                status: "ratified",
+                timestamp: "Just now",
+              },
+              40
+            )
+          );
         }
       } catch {
         // Reconciled automatically by WS
       }
     },
-    [activeProjectId, applySnapshot]
+    [activeProject.name, activeProjectId, applySnapshot]
   );
 
   const dispatchWorkRequest = useCallback(
@@ -509,11 +790,29 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
         }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+        const data = (await res.json()) as {
+          artifact?: ArtifactFeedItem;
+          toolExecution?: { toolName: string; durationMs: number };
+          snapshot: RuntimePresenceSnapshot;
+        };
         applySnapshot(data.snapshot);
+        const targetAgent =
+          agents.find((a) => a.id === studioId) ??
+          DOCK_AGENTS_SEED.find((a) => a.id === studioId)!;
+        const bundle = buildTerminalBrainSyncCompound({
+          command: `@${studioId} ${trimmed}`,
+          agent: targetAgent,
+          projectId: activeProjectId,
+          toolName: data.toolExecution?.toolName,
+          durationMs: data.toolExecution?.durationMs,
+          artifact: data.artifact,
+        });
+        setDecisionFeed((prev) => dedupDecisionFeed(prev, bundle.decisionItem, 40));
+        setLibrarianRelationships((prev) => [bundle.relationshipItem, ...prev].slice(0, 20));
+        setLibrarianGraphUpdates((prev) => [bundle.graphUpdateItem, ...prev].slice(0, 20));
       }
     },
-    [activeProjectId, applySnapshot, selectedModel, selectedProvider]
+    [activeProjectId, agents, applySnapshot, selectedModel, selectedProvider]
   );
 
   const executeStudioTool = useCallback(
@@ -533,11 +832,29 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
         }),
       });
       if (res.ok) {
-        const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+        const data = (await res.json()) as {
+          artifact?: ArtifactFeedItem;
+          execution?: { durationMs?: number };
+          snapshot: RuntimePresenceSnapshot;
+        };
         applySnapshot(data.snapshot);
+        const targetAgent =
+          agents.find((a) => a.id === studioId) ??
+          DOCK_AGENTS_SEED.find((a) => a.id === studioId)!;
+        const bundle = buildTerminalBrainSyncCompound({
+          command: `${toolName}(${JSON.stringify(parameters ?? {}).slice(0, 40)})`,
+          agent: targetAgent,
+          projectId: activeProjectId,
+          toolName,
+          durationMs: data.execution?.durationMs ?? 16,
+          artifact: data.artifact,
+        });
+        setDecisionFeed((prev) => dedupDecisionFeed(prev, bundle.decisionItem, 40));
+        setLibrarianRelationships((prev) => [bundle.relationshipItem, ...prev].slice(0, 20));
+        setLibrarianGraphUpdates((prev) => [bundle.graphUpdateItem, ...prev].slice(0, 20));
       }
     },
-    [activeProjectId, applySnapshot]
+    [activeProjectId, agents, applySnapshot]
   );
 
   const conveneCouncil = useCallback(
@@ -618,11 +935,31 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
       const parsed = parseTerminalCommand(trimmed, fallbackAgent);
       setTerminalExpanded(true);
 
+      const targetId = parsed.targetAgentId;
+      const targetAgent =
+        agents.find((a) => a.id === targetId) ??
+        DOCK_AGENTS_SEED.find((a) => a.id === targetId)!;
+
       if (parsed.kind === "mode" && parsed.targetMode) {
         setMode(parsed.targetMode);
+        const modeBundle = buildTerminalBrainSyncCompound({
+          command: trimmed,
+          agent: targetAgent,
+          projectId: activeProject.id,
+          toolName: "terminal.exec",
+          durationMs: 8,
+        });
+        setLatestTerminalCompound(modeBundle.compound);
+        setToolActivityFeed((prev) => dedupToolActivityFeed(prev, modeBundle.toolItem, 40));
+        setArtifactFeed((prev) => [modeBundle.artifactItem, ...prev]);
+        setKnowledgeFeed((prev) => [modeBundle.knowledgeItem, ...prev]);
+        setDecisionFeed((prev) => dedupDecisionFeed(prev, modeBundle.decisionItem, 40));
+        setLibrarianRelationships((prev) => [modeBundle.relationshipItem, ...prev].slice(0, 20));
+        setLibrarianGraphUpdates((prev) => [modeBundle.graphUpdateItem, ...prev].slice(0, 20));
+
         const entry: TerminalTraceEntry = {
           id: `term-${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          timestamp: modeBundle.compound.timestamp,
           command: trimmed,
           targetAgentId: parsed.targetAgentId,
           provider: selectedProvider,
@@ -632,20 +969,21 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             `2. Project: ${activeProject.name}`,
           ],
           steps: [
-            { phase: "Planning", detail: "Parsing OS viewport mode directive." },
-            { phase: "Completed", detail: parsed.objective },
+            { phase: "Planning", detail: "Parsing MainBrain view/mode directive." },
+            { phase: "Completed", detail: parsed.objective, tool: "terminal.exec" },
           ],
           outputSummary: parsed.objective,
+          emittedArtifactTitle: modeBundle.artifactItem.title,
+          emittedKnowledgeTitle: modeBundle.knowledgeItem.title,
+          emittedDecisionTitle: modeBundle.decisionItem.title,
+          auditEntryId: modeBundle.compound.auditEntryId,
+          executionRecordId: modeBundle.compound.executionRecordId,
         };
         setTerminalHistory((prev) => [entry, ...prev]);
         return;
       }
 
       setIsExecutingCommand(true);
-      const targetId = parsed.targetAgentId;
-      const targetAgent =
-        agents.find((a) => a.id === targetId) ??
-        DOCK_AGENTS_SEED.find((a) => a.id === targetId)!;
 
       try {
         const res = await fetch("/api/runtime/dispatch", {
@@ -676,6 +1014,54 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
           const executedToolName = data.toolExecution?.toolName || targetAgent.tools[0];
           const executedDuration = data.toolExecution?.durationMs ?? 12;
 
+          // Synchronize Terminal command with MainBrain:
+          // Execution Record + Artifact + Knowledge Candidate + Decision + Audit Entry
+          const syncBundle = buildTerminalBrainSyncCompound({
+            command: trimmed,
+            agent: targetAgent,
+            projectId: activeProject.id,
+            toolName: executedToolName,
+            durationMs: executedDuration,
+            artifact: data.artifact,
+          });
+
+          setLatestTerminalCompound(syncBundle.compound);
+          setDecisionFeed((prev) => dedupDecisionFeed(prev, syncBundle.decisionItem, 40));
+          setLibrarianRelationships((prev) => [syncBundle.relationshipItem, ...prev].slice(0, 20));
+          setLibrarianGraphUpdates((prev) => [syncBundle.graphUpdateItem, ...prev].slice(0, 20));
+          setLibrarianEvolution((prev) => [
+            {
+              id: `evo-term-${Date.now()}`,
+              conceptTitle: syncBundle.knowledgeItem.title,
+              stage: "indexed",
+              version: "v1.1",
+              deltaSummary: `Compounded from terminal command "${trimmed}" via ${executedToolName}.`,
+              connectionsCount: 6,
+              updatedAt: syncBundle.compound.timestamp,
+            },
+            ...prev.slice(0, 15),
+          ]);
+
+          // Also publish a live node to the integrated Brain Graph
+          publishNodeToBrain({
+            id: `node-term-${Date.now()}`,
+            title: data.artifact.title,
+            category: "Wiki Page",
+            kind: "concept",
+            area: "system",
+            summary: data.summary,
+            notes: `# ${data.artifact.title}\n\nCommand: \`${trimmed}\`\nDecision: ${syncBundle.decisionItem.title}\nAudit: ${syncBundle.compound.auditEntryId}`,
+            stalenessDays: 0,
+            needsAttention: false,
+            connections: ["node-cortex-engine", "node-chief-librarian"],
+            tags: ["terminal-synced", targetId],
+            x: 20,
+            y: 14,
+            z: -12,
+            radius: 6,
+            isKeyAnchor: true,
+          });
+
           const steps: TerminalTraceStep[] = [
             {
               phase: "Planning",
@@ -688,22 +1074,18 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             },
             {
               phase: "Reviewing",
-              detail: `Validated artifact checksum #${data.artifact.checksumPrefix} & synced Librarian pipeline.`,
+              detail: `Validated artifact checksum #${data.artifact.checksumPrefix} & ratified Decision "${syncBundle.decisionItem.title}".`,
               tool: targetAgent.tools[1] ?? "quality_gate",
             },
             {
               phase: "Completed",
-              detail: `Emitted "${data.artifact.title}", Knowledge Candidate, and Audit Entry via WebSocket.`,
+              detail: `Synchronized Execution Record (${syncBundle.compound.executionRecordId}), Artifact ("${data.artifact.title}"), Knowledge Candidate, Decision, and Audit Entry (${syncBundle.compound.auditEntryId}) into MainBrain.`,
             },
           ];
 
           const traceEntry: TerminalTraceEntry = {
             id: `term-${Date.now()}`,
-            timestamp: new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-            }),
+            timestamp: syncBundle.compound.timestamp,
             command: trimmed,
             targetAgentId: targetId,
             provider: selectedProvider,
@@ -719,6 +1101,10 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             steps,
             outputSummary: data.summary,
             emittedArtifactTitle: data.artifact.title,
+            emittedKnowledgeTitle: syncBundle.knowledgeItem.title,
+            emittedDecisionTitle: syncBundle.decisionItem.title,
+            auditEntryId: syncBundle.compound.auditEntryId,
+            executionRecordId: syncBundle.compound.executionRecordId,
           };
 
           setTerminalHistory((prev) => [traceEntry, ...prev]);
@@ -727,12 +1113,46 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
         setIsExecutingCommand(false);
       }
     },
-    [activeProject, agents, applySnapshot, selectedModel, selectedProvider]
+    [activeProject, agents, applySnapshot, publishNodeToBrain, selectedModel, selectedProvider, setMode]
+  );
+
+  const goldenRuleTelemetry = useMemo(
+    () =>
+      deriveWarRoomGoldenRuleTelemetry({
+        activeMission,
+        activeProject,
+        agents,
+        selectedProvider,
+        selectedModel,
+        isExecutingCommand,
+        workflows,
+        toolActivityFeed,
+        artifactFeed,
+        activityFeed,
+        pendingApprovals,
+        latestTerminalCompound,
+      }),
+    [
+      activeMission,
+      activeProject,
+      agents,
+      selectedProvider,
+      selectedModel,
+      isExecutingCommand,
+      workflows,
+      toolActivityFeed,
+      artifactFeed,
+      activityFeed,
+      pendingApprovals,
+      latestTerminalCompound,
+    ]
   );
 
   const value: AgentOSContextValue = {
-    mode,
+    mode: modeState,
     setMode,
+    mainBrainView,
+    setMainBrainView,
     activeProjectId,
     setActiveProjectId,
     projects,
@@ -750,6 +1170,12 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     artifactFeed,
     activityFeed,
     toolActivityFeed,
+    decisionFeed,
+    librarianRelationships,
+    librarianGraphUpdates,
+    librarianEvolution,
+    councilConflicts,
+    latestTerminalCompound,
     workflows,
     workRequests,
     pendingApprovals,
@@ -781,6 +1207,19 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     setSelectedBrainNode,
     isBlueprintOpen,
     setIsBlueprintOpen,
+    disclosureLevel,
+    setDisclosureLevel,
+    activeMission,
+    setActiveMission,
+    warRoomLayout,
+    goldenRuleTelemetry,
+    applyWarRoomPreset,
+    activateWarRoomPanel,
+    moveWarRoomPanelToZone,
+    toggleWarRoomPanelVisibility,
+    toggleWarRoomZoneCollapsed,
+    setWarRoomMaximizedPanel,
+    commitWarRoomZoneDimensions,
   };
 
   return <AgentOSContext.Provider value={value}>{children}</AgentOSContext.Provider>;
@@ -793,3 +1232,4 @@ export function useAgentOS(): AgentOSContextValue {
   }
   return ctx;
 }
+

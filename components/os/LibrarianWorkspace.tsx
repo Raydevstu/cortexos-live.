@@ -11,7 +11,7 @@ export default function LibrarianWorkspace() {
     knowledgeFeed,
     ingestKnowledgeItem,
     publishNodeToBrain,
-    setMode,
+    setMainBrainView,
     runTerminalCommand,
   } = useAgentOS();
 
@@ -86,11 +86,11 @@ export default function LibrarianWorkspace() {
 
         <button
           type="button"
-          onClick={() => setMode("brain")}
+          onClick={() => setMainBrainView("graph")}
           className="inline-flex items-center gap-1.5 text-xs text-[#00ffa3] hover:underline"
         >
           <Network className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Inspect in Brain Mode</span>
+          <span>Focus MainBrain Graph</span>
         </button>
       </div>
 

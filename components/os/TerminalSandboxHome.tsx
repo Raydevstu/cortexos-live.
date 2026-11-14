@@ -31,10 +31,12 @@ export default function TerminalSandboxHome() {
     terminalExpanded,
     setTerminalExpanded,
     terminalHistory,
+    latestTerminalCompound,
     isExecutingCommand,
     runTerminalCommand,
     triggerProviderFailover,
     summonAgent,
+    setMainBrainView,
   } = useAgentOS();
 
   const [input, setInput] = useState("");
@@ -142,7 +144,7 @@ export default function TerminalSandboxHome() {
           <div className="lg:col-span-6 border-b lg:border-b-0 lg:border-r border-white/10 p-3.5 overflow-y-auto space-y-3 bg-[#090c11]">
             <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/10">
               <div className="text-xs font-semibold text-white truncate">
-                Execution Console · Hermes & DeepSeek Harness
+                Execution Console · Synchronized with MainBrain
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 {QUICK_COMMANDS.slice(0, 3).map((cmd) => {
@@ -202,40 +204,101 @@ export default function TerminalSandboxHome() {
             </div>
           </div>
 
-          {/* Right Panel: Emitted Artifact & Agent Binding */}
-          <aside className="lg:col-span-3 p-3.5 overflow-y-auto bg-[#0e121a] space-y-3">
-            <h3 className="text-xs font-semibold text-slate-300">
-              Harness Target & Emitted Artifact
+          {/* Right Panel: Terminal -> MainBrain 5-Part Compound Synchronization */}
+          <aside
+            data-testid="terminal-brain-sync-panel"
+            className="lg:col-span-3 p-3.5 overflow-y-auto bg-[#0e121a] space-y-3"
+          >
+            <h3 className="text-xs font-semibold text-white">
+              MainBrain Compound Sync
             </h3>
             {latestTrace ? (
-              <div className="space-y-3 text-xs">
-                <div className="p-3 rounded bg-[#141923] border border-white/10 space-y-1.5">
-                  <div className="font-mono text-[11px] text-slate-400">
-                    Target Agent: {latestTrace.targetAgentId}
+              <div className="space-y-2 text-xs">
+                <div className="divide-y divide-white/10 rounded bg-[#141923] border border-white/10 text-[11px]">
+                  <div className="p-2 flex items-center justify-between gap-2">
+                    <span className="text-slate-400 shrink-0">1. Execution Record</span>
+                    <span className="font-mono text-[#00ffa3] truncate">
+                      {latestTerminalCompound?.executionRecordId ??
+                        latestTrace.executionRecordId ??
+                        "texec-seed-1"}
+                    </span>
                   </div>
-                  <div className="font-semibold text-white">
-                    {latestTrace.emittedArtifactTitle ?? "Readiness Verification Report"}
+                  <div className="p-2 space-y-0.5">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>2. Artifact</span>
+                      <button
+                        type="button"
+                        onClick={() => setMainBrainView("artifacts")}
+                        className="text-[10px] text-[#00ffa3] hover:underline"
+                      >
+                        Artifacts View
+                      </button>
+                    </div>
+                    <div className="text-teal-300 font-medium truncate">
+                      {latestTerminalCompound?.artifactTitle ??
+                        latestTrace.emittedArtifactTitle ??
+                        "Design System Tokens v1.0"}
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
-                    {latestTrace.outputSummary}
-                  </p>
+                  <div className="p-2 space-y-0.5">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>3. Knowledge Candidate</span>
+                      <button
+                        type="button"
+                        onClick={() => setMainBrainView("knowledge")}
+                        className="text-[10px] text-[#00ffa3] hover:underline"
+                      >
+                        Knowledge View
+                      </button>
+                    </div>
+                    <div className="text-sky-300 font-medium truncate">
+                      {latestTerminalCompound?.knowledgeCandidateTitle ??
+                        latestTrace.emittedKnowledgeTitle ??
+                        "Knowledge Candidate · WCAG AA Standard"}
+                    </div>
+                  </div>
+                  <div className="p-2 space-y-0.5">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span>4. Decision</span>
+                      <button
+                        type="button"
+                        onClick={() => setMainBrainView("decisions")}
+                        className="text-[10px] text-[#00ffa3] hover:underline"
+                      >
+                        Decision View
+                      </button>
+                    </div>
+                    <div className="text-violet-300 font-medium truncate">
+                      {latestTerminalCompound?.decisionTitle ??
+                        latestTrace.emittedDecisionTitle ??
+                        "Enforce MainBrain as Primary OS"}
+                    </div>
+                  </div>
+                  <div className="p-2 flex items-center justify-between gap-2">
+                    <span className="text-slate-400 shrink-0">5. Audit Entry</span>
+                    <span className="font-mono text-amber-300 truncate">
+                      {latestTerminalCompound?.auditEntryId ??
+                        latestTrace.auditEntryId ??
+                        "aud-seed-a91f4c82"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
                   <button
                     type="button"
                     onClick={() => summonAgent(latestTrace.targetAgentId)}
-                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-[#00ffa3] hover:underline"
+                    className="inline-flex items-center gap-1 text-[11px] text-[#00ffa3] hover:underline"
                   >
-                    <span>Summon {latestTrace.targetAgentId} Workspace</span>
+                    <span>Summon {latestTrace.targetAgentId} Teammate</span>
                   </button>
-                </div>
-
-                <div className="space-y-1">
-                  <div className="text-[11px] font-semibold text-slate-400">
-                    Slash & Agent Commands
-                  </div>
-                  <div className="font-mono text-[11px] text-slate-400 space-y-0.5">
-                    <div>@design &lt;task&gt; · @jarvis &lt;task&gt;</div>
-                    <div>/brain · /war-room · /mainbrain</div>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMainBrainView("graph")}
+                    className="text-[11px] text-sky-300 hover:underline"
+                  >
+                    Inspect Graph
+                  </button>
                 </div>
               </div>
             ) : (

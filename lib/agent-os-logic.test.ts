@@ -2,9 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   advanceSimulatedAgentTick,
+  buildTerminalBrainSyncCompound,
   CANONICAL_DOCK_ORDER,
   closeWorkspaceState,
+  deriveAgentTeammateTelemetry,
+  deriveWorkspaceIntelligence,
   DOCK_AGENTS_SEED,
+  INITIAL_ARTIFACT_FEED,
+  INITIAL_COUNCIL_CONFLICTS,
+  INITIAL_COUNCIL_REPORT_SEED,
+  INITIAL_DECISION_FEED,
+  INITIAL_KNOWLEDGE_FEED,
+  INITIAL_LIBRARIAN_EVOLUTION,
+  INITIAL_LIBRARIAN_GRAPH_UPDATES,
+  INITIAL_LIBRARIAN_RELATIONSHIPS,
+  INITIAL_TOOL_ACTIVITY_FEED,
+  INITIAL_WORKFLOW_FEED,
   nextLifecycleStatus,
   parseTerminalCommand,
   setWorkspaceModeState,
@@ -123,3 +136,72 @@ test("advanceSimulatedAgentTick cycles agents across Planning -> Executing -> Re
     new Set(["planning", "executing", "reviewing", "completed"])
   );
 });
+
+test("deriveAgentTeammateTelemetry exposes workflow, task, artifact, health, provider, recent decisions, and tool usage", () => {
+  for (const agent of DOCK_AGENTS_SEED) {
+    const telemetry = deriveAgentTeammateTelemetry(
+      agent,
+      INITIAL_TOOL_ACTIVITY_FEED,
+      INITIAL_DECISION_FEED
+    );
+    assert.ok(telemetry.agent.currentWorkflow.length > 0);
+    assert.ok(telemetry.agent.currentTask.length > 0);
+    assert.ok(telemetry.agent.currentArtifact.length > 0);
+    assert.ok(telemetry.agent.health >= 90);
+    assert.ok(telemetry.agent.provider.length > 0);
+    assert.ok(telemetry.recentDecisions.length >= 1);
+    assert.ok(telemetry.toolUsageSummary.length > 0);
+  }
+});
+
+test("deriveWorkspaceIntelligence returns synchronized work, workflow, artifacts, knowledge, tools, and decisions for summoned agents", () => {
+  const designIntel = deriveWorkspaceIntelligence("design", {
+    agents: DOCK_AGENTS_SEED,
+    workRequests: [],
+    workflows: INITIAL_WORKFLOW_FEED,
+    artifactFeed: INITIAL_ARTIFACT_FEED,
+    knowledgeFeed: INITIAL_KNOWLEDGE_FEED,
+    toolActivityFeed: INITIAL_TOOL_ACTIVITY_FEED,
+    decisionFeed: INITIAL_DECISION_FEED,
+  });
+
+  assert.equal(designIntel.agentId, "design");
+  assert.ok(designIntel.currentWork.length > 0);
+  assert.equal(designIntel.currentWorkflow, "DesignWorkflow");
+  assert.ok(designIntel.generatedArtifacts.length >= 2);
+  assert.ok(designIntel.relevantKnowledge.length >= 1);
+  assert.ok(designIntel.toolActivity.length >= 1);
+  assert.ok(designIntel.recentDecisions.length >= 1);
+});
+
+test("buildTerminalBrainSyncCompound generates Execution Record, Artifact, Knowledge Candidate, Decision, and Audit Entry", () => {
+  const archAgent = DOCK_AGENTS_SEED.find((a) => a.id === "architecture")!;
+  const bundle = buildTerminalBrainSyncCompound({
+    command: "@architecture Validate MainBrain Graph OpenAPI contract",
+    agent: archAgent,
+    projectId: "proj-solar-crm",
+    toolName: "docs.openapi_read",
+    durationMs: 15,
+  });
+
+  assert.ok(bundle.compound.executionRecordId.startsWith("texec-term-"));
+  assert.ok(bundle.compound.artifactId.startsWith("art-term-"));
+  assert.ok(bundle.compound.knowledgeCandidateId.startsWith("kf-term-"));
+  assert.ok(bundle.compound.decisionId.startsWith("dec-term-"));
+  assert.ok(bundle.compound.auditEntryId.startsWith("aud-"));
+  assert.equal(bundle.toolItem.toolName, "docs.openapi_read");
+  assert.equal(bundle.decisionItem.impact, "architecture");
+  assert.equal(bundle.relationshipItem.relationType, "derives_from");
+  assert.equal(bundle.graphUpdateItem.action, "node_indexed");
+});
+
+test("MainBrainV2 Librarian and Agent Council seeds are populated and valid", () => {
+  assert.ok(INITIAL_LIBRARIAN_RELATIONSHIPS.length >= 4);
+  assert.ok(INITIAL_LIBRARIAN_GRAPH_UPDATES.length >= 3);
+  assert.ok(INITIAL_LIBRARIAN_EVOLUTION.length >= 3);
+  assert.ok(INITIAL_COUNCIL_CONFLICTS.length >= 2);
+  assert.ok(INITIAL_COUNCIL_REPORT_SEED.opinions.length >= 4);
+  assert.ok(INITIAL_COUNCIL_REPORT_SEED.decisions.length >= 3);
+  assert.ok(INITIAL_COUNCIL_REPORT_SEED.risks.length >= 2);
+});
+
