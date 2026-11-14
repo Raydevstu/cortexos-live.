@@ -1,27 +1,5 @@
 import type { Metadata } from "next";
-import { Syne, Plus_Jakarta_Sans, Space_Mono } from "next/font/google";
 import "./globals.css";
-
-const syne = Syne({
-  subsets: ["latin"],
-  weight: ["700", "800"],
-  variable: "--font-display",
-  display: "swap",
-});
-
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-sans",
-  display: "swap",
-});
-
-const spaceMono = Space_Mono({
-  subsets: ["latin"],
-  weight: ["400", "700"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: "CortexOS — Technical Systematic AI-Native Operating System",
@@ -47,11 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-      className={`${syne.variable} ${jakarta.variable} ${spaceMono.variable} dark`}
-    >
+    <html lang="en" suppressHydrationWarning className="dark">
       <body
         suppressHydrationWarning
         className="bg-[#0c0d0f] text-[#e4e6eb] font-sans text-[13px] antialiased selection:bg-[#00ffa3] selection:text-black"

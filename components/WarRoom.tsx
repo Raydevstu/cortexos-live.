@@ -127,6 +127,8 @@ function buildMutationHeaders(): Record<string, string> {
 interface WarRoomProps {
   onPublishNodeToBrain: (node: BrainNode) => void;
   onSwitchToBrainMode: () => void;
+  activeProjectId?: string;
+  onActiveProjectIdChange?: (id: string) => void;
 }
 
 function renderFormattedText(text: string): React.ReactNode {
@@ -156,10 +158,20 @@ function renderFormattedText(text: string): React.ReactNode {
 export default function WarRoom({
   onPublishNodeToBrain,
   onSwitchToBrainMode,
+  activeProjectId: propActiveProjectId,
+  onActiveProjectIdChange,
 }: WarRoomProps) {
   // Core CortexOS Domain State (React cache hydrated from PostgreSQL source of truth)
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
-  const [activeProjectId, setActiveProjectId] = useState<string>("proj-solar-crm");
+  const [internalActiveProjectId, setInternalActiveProjectId] = useState<string>("proj-solar-crm");
+  const activeProjectId = propActiveProjectId ?? internalActiveProjectId;
+  const setActiveProjectId = useCallback(
+    (id: string) => {
+      setInternalActiveProjectId(id);
+      onActiveProjectIdChange?.(id);
+    },
+    [onActiveProjectIdChange]
+  );
   const [studios, setStudios] = useState<Studio[]>(INITIAL_STUDIOS);
   const [sources, setSources] = useState<Source[]>(INITIAL_SOURCES);
   const [artifacts, setArtifacts] = useState<Artifact[]>(INITIAL_ARTIFACTS);

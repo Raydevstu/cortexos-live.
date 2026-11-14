@@ -243,6 +243,26 @@ export async function POST(req: NextRequest) {
     const currentPhase = body.current_phase || "discovery";
 
     const created = await dbTransaction(async (tx) => {
+      // Ensure unique slug to avoid projects_slug_key constraint violation
+      let finalSlug = rawSlug;
+      let counter = 1;
+      while (true) {
+        const candidate = counter === 1 ? rawSlug : `${rawSlug}-${counter}`;
+        const existing = await tx.query<{ id: string }>(
+          "SELECT id FROM projects WHERE slug = $1",
+          [candidate]
+        );
+        if (existing.rows.length === 0) {
+          finalSlug = candidate;
+          break;
+        }
+        counter++;
+        if (counter > 100) {
+          finalSlug = `${rawSlug}-${Date.now().toString(36)}`;
+          break;
+        }
+      }
+
       const idRes = await tx.query<{ id: string }>(
         "SELECT new_object('project') AS id"
       );
@@ -266,8 +286,13 @@ export async function POST(req: NextRequest) {
       }>(
         `INSERT INTO projects (id, slug, name, description, status, current_phase)
          VALUES ($1, $2, $3, $4, $5::project_status, $6)
+         ON CONFLICT (id) DO UPDATE
+           SET name = EXCLUDED.name,
+               description = EXCLUDED.description,
+               current_phase = EXCLUDED.current_phase,
+               updated_at = now()
          RETURNING id, slug, name, description, status, current_phase, created_at::text, updated_at::text`,
-        [id, rawSlug, name, description, status, currentPhase]
+        [id, finalSlug, name, description, status, currentPhase]
       );
 
       await tx.query(
@@ -275,14 +300,14 @@ export async function POST(req: NextRequest) {
          VALUES ($1, 'jarvis', 'Jarvis Supervisor', $2, 'Just now')`,
         [
           id,
-          `Initialized **${name}** (\`${rawSlug}\`) in **1. Discovery Studio**. All 7 Studios and Chief Librarian are standing by.`,
+          `Initialized **${name}** (\`${finalSlug}\`) in **1. Discovery Studio**. All 7 Studios and Chief Librarian are standing by.`,
         ]
       );
 
       await tx.query(
         `INSERT INTO audit_log (actor_type, actor_id, action, object_id, details)
          VALUES ('user', 'owner', 'project.create', $1, $2::jsonb)`,
-        [id, JSON.stringify({ slug: rawSlug, name })]
+        [id, JSON.stringify({ slug: finalSlug, name })]
       );
 
       return ins.rows[0];
@@ -290,7 +315,16 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(created, { status: 201 });
   } catch (err: unknown) {
-    const error = err as Error;
+    const error = err as Error & { code?: string };
+    if (
+      error?.code === "23505" ||
+      error.message?.includes("projects_slug_key")
+    ) {
+      return NextResponse.json(
+        { error: "A project with this slug or name already exists" },
+        { status: 409 }
+      );
+    }
     console.error("[POST /api/projects] Error:", error);
     return NextResponse.json(
       { error: error.message || "Failed to create project" },

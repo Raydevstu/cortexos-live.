@@ -6,9 +6,14 @@ export type GraphLayoutMode =
   | "links"
   | "timeline";
 export type NodeKind =
-  | "skill"
   | "project"
   | "note"
+  | "artifact"
+  | "entity"
+  | "concept"
+  | "studio"
+  | "agent"
+  | "skill"
   | "memory"
   | "routine"
   | "app"
@@ -58,6 +63,13 @@ export interface BrainNode {
 }
 
 export type SourceCategory =
+  | "Project"
+  | "Source"
+  | "Artifact"
+  | "Entity"
+  | "Concept"
+  | "Wiki Page"
+  | "Studio"
   | "Business wiki"
   | "Meetings"
   | "Video knowledge"
@@ -113,9 +125,14 @@ export const KIND_LABELS: Record<
   NodeKind,
   { label: string; iconShape: string; color: string }
 > = {
-  skill: { label: "Skill", iconShape: "diamond", color: "#a855f7" },
-  project: { label: "Project", iconShape: "cube", color: "#34d399" },
+  project: { label: "Project", iconShape: "cube", color: "#10b981" },
   note: { label: "Note", iconShape: "sphere", color: "#38bdf8" },
+  artifact: { label: "Artifact", iconShape: "diamond", color: "#a855f7" },
+  entity: { label: "Entity", iconShape: "small-octa", color: "#f59e0b" },
+  concept: { label: "Concept", iconShape: "cylinder", color: "#ec4899" },
+  studio: { label: "Studio", iconShape: "cube", color: "#6366f1" },
+  agent: { label: "Agent", iconShape: "diamond", color: "#818cf8" },
+  skill: { label: "Skill", iconShape: "diamond", color: "#a855f7" },
   memory: { label: "Memory", iconShape: "sphere-ring", color: "#c084fc" },
   routine: { label: "Routine", iconShape: "torus", color: "#eab308" },
   app: { label: "App", iconShape: "cylinder", color: "#22d3ee" },
@@ -199,67 +216,67 @@ export interface SourceMeta {
 
 export const SOURCES: SourceMeta[] = [
   {
-    name: "Business wiki",
-    count: 6,
+    name: "Project",
+    count: 0,
+    color: "#10b981",
+    glowColor: "rgba(16, 185, 129, 0.4)",
+    description: "CortexOS Projects & Applications.",
+    offsetAngle: 0,
+    orbitalRadius: 130,
+  },
+  {
+    name: "Source",
+    count: 0,
     color: "#38bdf8",
     glowColor: "rgba(56, 189, 248, 0.4)",
-    description: "Karpathy LLM Wiki pages (`brain/wiki/`) maintained by the Chief Librarian.",
-    offsetAngle: 0,
-    orbitalRadius: 150,
-  },
-  {
-    name: "Meetings",
-    count: 0,
-    color: "#f43f5e",
-    glowColor: "rgba(244, 63, 94, 0.4)",
-    description: "Ingested meeting transcripts and discovery interviews.",
+    description: "Raw ingested markdown, transcript, and document sources.",
     offsetAngle: Math.PI * 0.3,
-    orbitalRadius: 190,
+    orbitalRadius: 180,
   },
   {
-    name: "Video knowledge",
+    name: "Artifact",
     count: 0,
-    color: "#eab308",
-    glowColor: "rgba(234, 179, 8, 0.4)",
-    description: "Media & technical reference documentation.",
+    color: "#a855f7",
+    glowColor: "rgba(168, 85, 247, 0.4)",
+    description: "Versioned studio deliverables, PRDs, wireframes, and ADRs.",
     offsetAngle: Math.PI * 0.6,
+    orbitalRadius: 160,
+  },
+  {
+    name: "Entity",
+    count: 0,
+    color: "#f59e0b",
+    glowColor: "rgba(245, 158, 11, 0.4)",
+    description: "Extracted named people, tools, organizations, and systems.",
+    offsetAngle: Math.PI * 0.9,
     orbitalRadius: 170,
   },
   {
-    name: "Claude memory",
-    count: 4,
-    color: "#c084fc",
-    glowColor: "rgba(192, 132, 252, 0.4)",
-    description: "Immutable content-addressed raw sources (`brain/raw/`).",
-    offsetAngle: Math.PI * 0.9,
-    orbitalRadius: 185,
-  },
-  {
-    name: "Codex memory",
-    count: 7,
-    color: "#22d3ee",
-    glowColor: "rgba(34, 211, 238, 0.4)",
-    description: "Extracted Entities & Concepts (`entities` and `concepts` tables).",
+    name: "Concept",
+    count: 0,
+    color: "#ec4899",
+    glowColor: "rgba(236, 72, 153, 0.4)",
+    description: "High-level domain concepts, abstractions, and principles.",
     offsetAngle: Math.PI * 1.2,
-    orbitalRadius: 165,
+    orbitalRadius: 190,
   },
   {
-    name: "Projects",
-    count: 10,
-    color: "#34d399",
-    glowColor: "rgba(52, 211, 153, 0.4)",
-    description: "Projects, versioned Studio Artifacts, and Architectural Decisions (ADRs).",
+    name: "Wiki Page",
+    count: 0,
+    color: "#14b8a6",
+    glowColor: "rgba(20, 184, 166, 0.4)",
+    description: "Karpathy LLM Wiki pages maintained in PostgreSQL.",
     offsetAngle: Math.PI * 1.5,
-    orbitalRadius: 175,
+    orbitalRadius: 150,
   },
   {
-    name: "Skills & agents",
-    count: 14,
-    color: "#a855f7",
-    glowColor: "rgba(168, 85, 247, 0.4)",
-    description: "7 Specialist Studios and their registered Studio Agents.",
+    name: "Studio",
+    count: 0,
+    color: "#6366f1",
+    glowColor: "rgba(99, 102, 241, 0.4)",
+    description: "7 Specialist Studios and their registered AI agents.",
     offsetAngle: Math.PI * 1.8,
-    orbitalRadius: 145,
+    orbitalRadius: 140,
   },
 ];
 
@@ -295,51 +312,58 @@ export function computeBrainNodeLayouts(
     }
   }
 
-  const categoryOrder: Record<SourceCategory, number> = {
-    "Business wiki": 0,
-    Meetings: 1,
-    "Video knowledge": 2,
+  const categoryOrder: Record<string, number> = {
+    Project: 0,
+    Studio: 1,
+    Artifact: 2,
+    Source: 3,
+    "Wiki Page": 4,
+    Entity: 5,
+    Concept: 6,
+    "Business wiki": 4,
+    Meetings: 3,
+    "Video knowledge": 3,
     "Claude memory": 3,
-    "Codex memory": 4,
-    Projects: 5,
-    "Skills & agents": 6,
+    "Codex memory": 5,
+    Projects: 0,
+    "Skills & agents": 1,
   };
 
   const ringBandRadii: Record<string, { min: number; max: number }> = {
-    core: { min: 18, max: 48 },
-    memory: { min: 75, max: 120 },
-    projects: { min: 130, max: 175 },
-    skills: { min: 185, max: 230 },
-    routines: { min: 240, max: 280 },
-    apps: { min: 290, max: 330 },
-    runs: { min: 340, max: 380 },
+    core: { min: 20, max: 55 },
+    studios: { min: 70, max: 110 },
+    artifacts: { min: 120, max: 160 },
+    sources: { min: 170, max: 215 },
+    wiki: { min: 225, max: 270 },
+    entities: { min: 280, max: 325 },
+    concepts: { min: 335, max: 380 },
   };
 
   const bandBuckets: Record<string, BrainNode[]> = {
     core: [],
-    memory: [],
-    projects: [],
-    skills: [],
-    routines: [],
-    apps: [],
-    runs: [],
+    studios: [],
+    artifacts: [],
+    sources: [],
+    wiki: [],
+    entities: [],
+    concepts: [],
   };
 
   nodes.forEach((node) => {
-    if (node.tags.includes("project")) {
+    if (node.kind === "project" || node.category === "Project") {
       bandBuckets.core.push(node);
-    } else if (node.kind === "memory") {
-      bandBuckets.memory.push(node);
-    } else if (node.kind === "project") {
-      bandBuckets.projects.push(node);
-    } else if (node.kind === "skill") {
-      bandBuckets.skills.push(node);
-    } else if (node.kind === "routine") {
-      bandBuckets.routines.push(node);
-    } else if (node.kind === "app") {
-      bandBuckets.apps.push(node);
+    } else if (node.kind === "studio" || node.kind === "agent" || node.category === "Studio") {
+      bandBuckets.studios.push(node);
+    } else if (node.kind === "artifact" || node.category === "Artifact") {
+      bandBuckets.artifacts.push(node);
+    } else if (node.category === "Wiki Page") {
+      bandBuckets.wiki.push(node);
+    } else if (node.kind === "entity" || node.category === "Entity") {
+      bandBuckets.entities.push(node);
+    } else if (node.kind === "concept" || node.category === "Concept") {
+      bandBuckets.concepts.push(node);
     } else {
-      bandBuckets.runs.push(node);
+      bandBuckets.sources.push(node);
     }
   });
 

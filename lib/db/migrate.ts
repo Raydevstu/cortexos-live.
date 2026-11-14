@@ -163,6 +163,12 @@ CREATE OPERATOR <=> (LEFTARG = real[], RIGHTARG = real[], PROCEDURE = vector_cos
       await seedInitialCortexData(exec);
     }
 
+    // Synchronize bigserial sequences above any existing IDs to prevent unique constraint collisions
+    await exec.exec(`
+      SELECT setval('events_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM events), 0), 1000) + 1, false);
+      SELECT setval('audit_log_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM audit_log), 0), 1000) + 1, false);
+    `);
+
     // Transactional outbox invariant: ensure every source in the DB has a corresponding source_created event
     await exec.query(`
       INSERT INTO events (event_type, aggregate_type, aggregate_id, payload, idempotency_key, status, processed_at)
@@ -176,6 +182,11 @@ CREATE OPERATOR <=> (LEFTARG = real[], RIGHTARG = real[], PROCEDURE = vector_cos
          SELECT 1 FROM events e WHERE e.event_type = 'source_created' AND e.aggregate_id = s.id
        )
       ON CONFLICT (idempotency_key) DO NOTHING;
+    `);
+
+    // Synchronize again after inserting any backfilled events
+    await exec.exec(`
+      SELECT setval('events_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM events), 0), 1000) + 1, false);
     `);
 
     console.log(
@@ -657,4 +668,12 @@ async function seedInitialCortexData(exec: {
       ]
     );
   }
+
+  // Synchronize bigserial sequences above all seeded records
+  await exec.query(
+    "SELECT setval('events_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM events), 0), 1000) + 1, false)"
+  );
+  await exec.query(
+    "SELECT setval('audit_log_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM audit_log), 0), 1000) + 1, false)"
+  );
 }

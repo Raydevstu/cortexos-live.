@@ -115,41 +115,67 @@ export async function GET(
       );
       const conns = Array.from(adjMap.get(obj.id) || []);
 
-      let category: BrainNode["category"] = "Business wiki";
       let kind: BrainNode["kind"] = "note";
+      let category: BrainNode["category"] = "Source";
       let area: BrainNode["area"] = "system";
 
-      if (obj.object_type === "studio" || obj.object_type === "agent") {
-        category = "Skills & agents";
-        kind = "skill";
-        area = "system";
-      } else if (
-        obj.object_type === "project" ||
-        obj.object_type === "artifact" ||
-        obj.object_type === "decision"
-      ) {
-        category = "Projects";
-        kind = "project";
-        area = "business";
-      } else if (obj.object_type === "source") {
-        category = "Claude memory";
-        kind = "memory";
-        area = "system";
-      } else if (obj.object_type === "entity" || obj.object_type === "concept") {
-        category = "Codex memory";
-        kind = "note";
-        area = "content";
-      } else if (obj.object_type === "wiki_page") {
-        category = "Business wiki";
-        kind = "note";
-        area = "system";
+      switch (obj.object_type) {
+        case "project":
+          kind = "project";
+          category = "Project";
+          area = "business";
+          break;
+        case "source":
+          kind = "note";
+          category = "Source";
+          area = "content";
+          break;
+        case "artifact":
+          kind = "artifact";
+          category = "Artifact";
+          area = "business";
+          break;
+        case "entity":
+          kind = "entity";
+          category = "Entity";
+          area = "clients";
+          break;
+        case "concept":
+          kind = "concept";
+          category = "Concept";
+          area = "content";
+          break;
+        case "wiki_page":
+          kind = "note";
+          category = "Wiki Page";
+          area = "system";
+          break;
+        case "studio":
+          kind = "studio";
+          category = "Studio";
+          area = "system";
+          break;
+        case "agent":
+          kind = "agent";
+          category = "Studio";
+          area = "system";
+          break;
+        case "decision":
+          kind = "artifact";
+          category = "Artifact";
+          area = "business";
+          break;
+        default:
+          kind = "note";
+          category = "Source";
+          area = "system";
+          break;
       }
 
       const isAnchor =
         obj.object_type === "project" ||
         obj.object_type === "studio" ||
-        obj.object_type === "artifact" ||
-        obj.object_type === "source";
+        obj.object_type === "artifact";
 
       return {
         id: obj.id,
@@ -166,7 +192,7 @@ export async function GET(
         x: coords.x,
         y: coords.y,
         z: coords.z,
-        radius: isAnchor ? 6.6 : 5.0,
+        radius: obj.object_type === "project" ? 8.0 : isAnchor ? 6.5 : 4.8,
         isKeyAnchor: isAnchor,
       };
     });
@@ -186,11 +212,18 @@ export async function GET(
       };
     });
 
+    const edges = allRelsRes.rows.map((r) => ({
+      from: r.from_id,
+      to: r.to_id,
+      edge_type: r.edge_type,
+    }));
+
     return NextResponse.json({
       start_id: startUuid,
       max_depth: maxDepth,
       neighbors: hydratedNeighbors,
       nodes: brainNodes,
+      edges,
       relationships: allRelsRes.rows.map((r) => ({
         id: r.id,
         from_id: r.from_id,

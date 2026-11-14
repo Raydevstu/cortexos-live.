@@ -21,44 +21,8 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    let projectUuid: string | null = null;
 
-    if (id && id !== "all" && id !== "root") {
-      projectUuid = toUuid(id);
-      const existsCheck = await dbQuery<{ id: string }>(
-        "SELECT id FROM projects WHERE id = $1 LIMIT 1",
-        [projectUuid]
-      );
-      if (!existsCheck.rows[0]) {
-        const bySlug = await dbQuery<{ id: string }>(
-          "SELECT id FROM projects WHERE slug = $1 LIMIT 1",
-          [id]
-        );
-        if (bySlug.rows[0]) {
-          projectUuid = bySlug.rows[0].id;
-        } else {
-          projectUuid = null;
-        }
-      }
-    }
-
-    // Filter query: if projectUuid is given, focus on objects tied to that project or core anchors; else all
-    const projectFilterSql = projectUuid
-      ? `WHERE bo.id = $1
-            OR p.id = $1
-            OR art.project_id = $1
-            OR src.project_id = $1
-            OR dec.project_id = $1
-            OR bo.object_type IN ('studio', 'agent')
-            OR EXISTS (
-                 SELECT 1 FROM relationships r
-                  WHERE (r.from_id = $1 OR r.to_id = $1)
-                    AND (r.from_id = bo.id OR r.to_id = bo.id)
-               )`
-      : "";
-
-    const queryParams: unknown[] = projectUuid ? [projectUuid] : [];
-
+    // Fetch EVERY brain_objects row joined to its type table
     const objectsSql = `
       SELECT bo.id,
              bo.object_type::text AS object_type,
@@ -76,7 +40,8 @@ export async function GET(
         LEFT JOIN concepts con ON con.id = bo.id AND con.merged_into_id IS NULL
         LEFT JOIN decisions dec ON dec.id = bo.id
         LEFT JOIN wiki_pages wp ON wp.id = bo.id
-       ${projectFilterSql}
+       WHERE (ent.id IS NULL OR ent.merged_into_id IS NULL)
+         AND (con.id IS NULL OR con.merged_into_id IS NULL)
        ORDER BY bo.created_at ASC
     `;
 
@@ -87,11 +52,9 @@ export async function GET(
       summary: string;
       notes: string;
       subtype: string;
-    }>(objectsSql, queryParams);
+    }>(objectsSql);
 
-    const objectIdSet = new Set(allObjectsRes.rows.map((o) => o.id));
-
-    // Get relationships between these real objects
+    // Fetch EVERY active relationship in Postgres
     const allRelsRes = await dbQuery<{
       id: string;
       from_id: string;
@@ -106,15 +69,12 @@ export async function GET(
       `SELECT id, from_id, to_id, edge_type, confidence, review_state, source_id, metadata, created_at::text
          FROM relationships
         WHERE superseded_at IS NULL
-          AND review_state <> 'rejected'`
-    );
-
-    const filteredRels = allRelsRes.rows.filter(
-      (r) => objectIdSet.has(r.from_id) && objectIdSet.has(r.to_id)
+          AND review_state <> 'rejected'
+        ORDER BY created_at ASC`
     );
 
     const adjMap = new Map<string, Set<string>>();
-    for (const rel of filteredRels) {
+    for (const rel of allRelsRes.rows) {
       if (!adjMap.has(rel.from_id)) adjMap.set(rel.from_id, new Set());
       if (!adjMap.has(rel.to_id)) adjMap.set(rel.to_id, new Set());
       adjMap.get(rel.from_id)!.add(rel.to_id);
@@ -129,41 +89,70 @@ export async function GET(
       );
       const conns = Array.from(adjMap.get(obj.id) || []);
 
-      let category: BrainNode["category"] = "Business wiki";
+      // Mapping rules:
+      // project→project, source→note, artifact→artifact, entity→entity,
+      // concept→concept, wiki_page→note, studio→studio, agent→agent
       let kind: BrainNode["kind"] = "note";
+      let category: BrainNode["category"] = "Source";
       let area: BrainNode["area"] = "system";
 
-      if (obj.object_type === "studio" || obj.object_type === "agent") {
-        category = "Skills & agents";
-        kind = "skill";
-        area = "system";
-      } else if (
-        obj.object_type === "project" ||
-        obj.object_type === "artifact" ||
-        obj.object_type === "decision"
-      ) {
-        category = "Projects";
-        kind = "project";
-        area = "business";
-      } else if (obj.object_type === "source") {
-        category = "Claude memory";
-        kind = "memory";
-        area = "system";
-      } else if (obj.object_type === "entity" || obj.object_type === "concept") {
-        category = "Codex memory";
-        kind = "note";
-        area = "content";
-      } else if (obj.object_type === "wiki_page") {
-        category = "Business wiki";
-        kind = "note";
-        area = "system";
+      switch (obj.object_type) {
+        case "project":
+          kind = "project";
+          category = "Project";
+          area = "business";
+          break;
+        case "source":
+          kind = "note";
+          category = "Source";
+          area = "content";
+          break;
+        case "artifact":
+          kind = "artifact";
+          category = "Artifact";
+          area = "business";
+          break;
+        case "entity":
+          kind = "entity";
+          category = "Entity";
+          area = "clients";
+          break;
+        case "concept":
+          kind = "concept";
+          category = "Concept";
+          area = "content";
+          break;
+        case "wiki_page":
+          kind = "note";
+          category = "Wiki Page";
+          area = "system";
+          break;
+        case "studio":
+          kind = "studio";
+          category = "Studio";
+          area = "system";
+          break;
+        case "agent":
+          kind = "agent";
+          category = "Studio";
+          area = "system";
+          break;
+        case "decision":
+          kind = "artifact";
+          category = "Artifact";
+          area = "business";
+          break;
+        default:
+          kind = "note";
+          category = "Source";
+          area = "system";
+          break;
       }
 
       const isAnchor =
         obj.object_type === "project" ||
         obj.object_type === "studio" ||
-        obj.object_type === "artifact" ||
-        obj.object_type === "source";
+        obj.object_type === "artifact";
 
       return {
         id: obj.id,
@@ -180,21 +169,23 @@ export async function GET(
         x: coords.x,
         y: coords.y,
         z: coords.z,
-        radius: isAnchor ? 6.5 : 4.8,
+        radius: obj.object_type === "project" ? 8.0 : isAnchor ? 6.5 : 4.8,
         isKeyAnchor: isAnchor,
       };
     });
 
-    const edges: [string, string][] = filteredRels.map((r) => [
-      r.from_id,
-      r.to_id,
-    ]);
+    const edges = allRelsRes.rows.map((r) => ({
+      from: r.from_id,
+      to: r.to_id,
+      edge_type: r.edge_type,
+    }));
 
     return NextResponse.json({
-      project_id: projectUuid || id,
+      project_id: id,
       count: brainNodes.length,
       nodes: brainNodes,
-      relationships: filteredRels.map((r) => ({
+      edges,
+      relationships: allRelsRes.rows.map((r) => ({
         id: r.id,
         from_id: r.from_id,
         from_label: (r.metadata?.from_label as string) || r.from_id,
@@ -206,7 +197,6 @@ export async function GET(
         review_state: r.review_state,
         created_at: r.created_at,
       })),
-      edges,
     });
   } catch (err: unknown) {
     const error = err as Error;
@@ -217,3 +207,4 @@ export async function GET(
     );
   }
 }
+

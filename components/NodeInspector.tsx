@@ -32,6 +32,43 @@ export default function NodeInspector({
   const [copied, setCopied] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isReviewed, setIsReviewed] = useState(false);
+  const [graphNeighbors, setGraphNeighbors] = useState<
+    Array<{
+      object_id: string;
+      depth: number;
+      object_type: string;
+      title: string;
+    }>
+  >([]);
+  const [isLoadingNeighbors, setIsLoadingNeighbors] = useState(false);
+
+  React.useEffect(() => {
+    if (!node?.id) {
+      setGraphNeighbors([]);
+      return;
+    }
+    let active = true;
+    setIsLoadingNeighbors(true);
+    fetch(`/api/graph/${encodeURIComponent(node.id)}?depth=2`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!active) return;
+        if (data && Array.isArray(data.neighbors)) {
+          setGraphNeighbors(data.neighbors);
+        } else {
+          setGraphNeighbors([]);
+        }
+      })
+      .catch(() => {
+        if (active) setGraphNeighbors([]);
+      })
+      .finally(() => {
+        if (active) setIsLoadingNeighbors(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [node?.id]);
 
   if (!node) return null;
 
@@ -202,32 +239,66 @@ export default function NodeInspector({
           </div>
         </div>
 
-        {/* Connected Nodes */}
+        {/* Real Graph Neighbors from graph_neighbors() */}
         <div>
           <div className="text-[11px] font-mono uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <LinkIcon className="w-3.5 h-3.5 text-cyan-400" />
-              Connected Knowledge Nodes ({node.connections.length})
+              Graph Neighbors (via graph_neighbors()){" "}
+              <span className="text-cyan-400">
+                ({graphNeighbors.length > 0 ? graphNeighbors.length : node.connections.length})
+              </span>
             </span>
-            <span className="text-[10px] text-slate-400">Click to inspect</span>
+            <span className="text-[10px] text-slate-400 font-mono">depth ≤ 2</span>
           </div>
 
-          <div className="space-y-1.5">
-            {node.connections.map((connId) => (
-              <button
-                key={connId}
-                onClick={() => onSelectConnectedNode(connId)}
-                className="w-full text-left p-2.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800/80 hover:border-cyan-500/50 flex items-center justify-between group transition-all"
-              >
-                <span className="text-xs font-medium text-slate-200 group-hover:text-cyan-300 truncate">
-                  {connId.replace(/^node-/, "").replace(/-/g, " ")}
-                </span>
-                <span className="text-[10px] font-mono text-slate-400 group-hover:text-white">
-                  Inspect →
-                </span>
-              </button>
-            ))}
-          </div>
+          {isLoadingNeighbors ? (
+            <div className="p-3 text-xs font-mono text-cyan-400 animate-pulse bg-slate-900/40 rounded-lg border border-slate-800">
+              Querying graph_neighbors(node, 2)...
+            </div>
+          ) : graphNeighbors.length > 0 ? (
+            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+              {graphNeighbors.map((neighbor) => (
+                <button
+                  key={`${neighbor.object_id}-${neighbor.depth}`}
+                  onClick={() => onSelectConnectedNode(neighbor.object_id)}
+                  className="w-full text-left p-2.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800/80 hover:border-cyan-500/50 flex items-center justify-between group transition-all"
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono shrink-0">
+                      d={neighbor.depth}
+                    </span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono uppercase shrink-0">
+                      {neighbor.object_type}
+                    </span>
+                    <span className="text-xs font-medium text-slate-200 group-hover:text-cyan-300 truncate">
+                      {neighbor.title}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 group-hover:text-white shrink-0">
+                    Inspect →
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {node.connections.map((connId) => (
+                <button
+                  key={connId}
+                  onClick={() => onSelectConnectedNode(connId)}
+                  className="w-full text-left p-2.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800/80 hover:border-cyan-500/50 flex items-center justify-between group transition-all"
+                >
+                  <span className="text-xs font-medium text-slate-200 group-hover:text-cyan-300 truncate">
+                    {connId.replace(/^node-/, "").replace(/-/g, " ")}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400 group-hover:text-white">
+                    Inspect →
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

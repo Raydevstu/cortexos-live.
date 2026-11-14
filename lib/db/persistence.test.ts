@@ -386,6 +386,43 @@ test("8. GET /api/graph/project/[id] returns real Postgres nodes and relationshi
   assert.ok(Array.isArray(data.edges), "Project graph must return edges array");
 });
 
+test("9. POST /api/projects auto-resolves duplicate slug collisions cleanly", async () => {
+  const { NextRequest } = await import("next/server.js");
+  const { POST: postProject } = await import("../../app/api/projects/route.ts");
+  const ownerKey = process.env.OWNER_KEY || "cortex-owner-key-v1";
+  const uniqueName = `Collision Test ${Date.now()}`;
+  const expectedBaseSlug = uniqueName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+  // Create first project with unique name
+  const req1 = new NextRequest("http://localhost:3000/api/projects", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-owner-key": ownerKey,
+    },
+    body: JSON.stringify({ name: uniqueName }),
+  });
+  const res1 = await postProject(req1);
+  assert.equal(res1.status, 201);
+  const data1 = await res1.json();
+  assert.equal(data1.slug, expectedBaseSlug);
+
+  // Create second project with the exact same name -> must auto-resolve to baseSlug-2 without 500
+  const req2 = new NextRequest("http://localhost:3000/api/projects", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-owner-key": ownerKey,
+    },
+    body: JSON.stringify({ name: uniqueName }),
+  });
+  const res2 = await postProject(req2);
+  assert.equal(res2.status, 201);
+  const data2 = await res2.json();
+  assert.equal(data2.slug, `${expectedBaseSlug}-2`);
+  assert.notEqual(data1.id, data2.id);
+});
+
 test.after(async () => {
   if (global.__cortexPglite) {
     await global.__cortexPglite.close();

@@ -24,6 +24,7 @@ type ActiveSurface =
 export default function CortexOSApp() {
   // Default to War Room or Brain Mode with instant toggle
   const [activeSurface, setActiveSurface] = useState<ActiveSurface>("warroom");
+  const [activeProjectId, setActiveProjectId] = useState<string>("proj-solar-crm");
   const [selectedNode, setSelectedNode] = useState<BrainNode | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -262,6 +263,8 @@ export default function CortexOSApp() {
           <WarRoom
             onPublishNodeToBrain={handlePublishNodeToBrain}
             onSwitchToBrainMode={() => setActiveSurface("brain")}
+            activeProjectId={activeProjectId}
+            onActiveProjectIdChange={setActiveProjectId}
           />
         )}
 
@@ -272,7 +275,7 @@ export default function CortexOSApp() {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             customNodes={customBrainNodes}
-            projectId="proj-solar-crm"
+            projectId={activeProjectId}
           />
         )}
 
