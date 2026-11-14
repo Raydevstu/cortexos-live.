@@ -138,6 +138,25 @@ export interface RiskAlertItem {
   mitigation: string;
 }
 
+export interface ToolActivityFeedItem {
+  id: string;
+  toolName: string;
+  category: "github" | "filesystem" | "documentation" | "terminal";
+  executionTimeMs: number;
+  agentId: DockAgentId;
+  agentName: string;
+  studioId: DockAgentId;
+  status: "running" | "completed" | "failed" | "denied";
+  inputSummary?: string;
+  result: string;
+  artifactId?: string;
+  artifactProduced: string;
+  knowledgeCandidateTitle?: string;
+  auditEntryId?: string;
+  checksumPrefix?: string;
+  timestamp: string;
+}
+
 export interface RuntimePresenceSnapshot {
   projectId: string;
   phase: DockAgentId;
@@ -148,6 +167,7 @@ export interface RuntimePresenceSnapshot {
   risks: RiskAlertItem[];
   councilReport: RuntimeCouncilReport | null;
   activityFeed: AgentActivityEvent[];
+  toolActivityFeed: ToolActivityFeedItem[];
   artifactFeed: ArtifactFeedItem[];
   knowledgeFeed: KnowledgeFeedItem[];
   updatedAt: string;
@@ -983,6 +1003,77 @@ export function advanceSimulatedAgentTick(
   return { nextAgents, emittedEvent };
 }
 
+export const INITIAL_TOOL_ACTIVITY_FEED: ToolActivityFeedItem[] = [
+  {
+    id: "texec-seed-1",
+    toolName: "fs.artifact_export",
+    category: "filesystem",
+    executionTimeMs: 14,
+    agentId: "design",
+    agentName: "Design",
+    studioId: "design",
+    status: "completed",
+    inputSummary: 'title="Design System Tokens v1.0" -> exports/design/design-system-tokens-v1-0.md',
+    result: "Exported artifact bundle 'exports/design/design-system-tokens-v1-0.md' + manifest (412 bytes, sha256=a91f4c82).",
+    artifactProduced: "Exported Artifact: Design System Tokens v1.0",
+    knowledgeCandidateTitle: "Artifact Export: Design System Tokens v1.0",
+    auditEntryId: "aud-seed-a91f4c82",
+    checksumPrefix: "a91f4c82",
+    timestamp: "Just now",
+  },
+  {
+    id: "texec-seed-2",
+    toolName: "docs.openapi_read",
+    category: "documentation",
+    executionTimeMs: 9,
+    agentId: "architecture",
+    agentName: "Architecture",
+    studioId: "architecture",
+    status: "completed",
+    inputSummary: 'serviceName="studio-service"',
+    result: "Parsed OpenAPI 3.1 contract for 'studio-service' (7 endpoints on port 8006).",
+    artifactProduced: "OpenAPI 3.1 Spec: studio-service",
+    knowledgeCandidateTitle: "OpenAPI Contract: studio-service",
+    auditEntryId: "aud-seed-7e11d904",
+    checksumPrefix: "7e11d904",
+    timestamp: "1m ago",
+  },
+  {
+    id: "texec-seed-3",
+    toolName: "github.file_write",
+    category: "github",
+    executionTimeMs: 19,
+    agentId: "development",
+    agentName: "Development",
+    studioId: "development",
+    status: "completed",
+    inputSummary: 'filePath="src/workspace-state-sync.ts" (328 bytes)',
+    result: "Wrote and staged 'src/workspace-state-sync.ts' (328 bytes, sha256=4b92e10a) in project git worktree.",
+    artifactProduced: "Staged Code Change: src/workspace-state-sync.ts",
+    knowledgeCandidateTitle: "Repository Change: src/workspace-state-sync.ts",
+    auditEntryId: "aud-seed-4b92e10a",
+    checksumPrefix: "4b92e10a",
+    timestamp: "2m ago",
+  },
+  {
+    id: "texec-seed-4",
+    toolName: "terminal.exec",
+    category: "terminal",
+    executionTimeMs: 22,
+    agentId: "qa",
+    agentName: "QA",
+    studioId: "qa",
+    status: "completed",
+    inputSummary: "$ git status --short (cwd=.)",
+    result: "Executed 'git status --short' in isolated workdir (22ms) -> A  src/workspace-state-sync.ts",
+    artifactProduced: "Terminal Execution Log: git status",
+    knowledgeCandidateTitle: "Terminal Audit: git status --short",
+    auditEntryId: "aud-seed-91c03d12",
+    checksumPrefix: "91c03d12",
+    timestamp: "3m ago",
+  },
+];
+
 export function mergeAgentTelemetry(
   agents: DockAgentState[],
   patch: Partial<DockAgentState> & { id: DockAgentId }
@@ -1005,5 +1096,13 @@ export function dedupActivityFeed(
   incoming: AgentActivityEvent,
   limit = 30
 ): AgentActivityEvent[] {
+  return [incoming, ...feed.filter((item) => item.id !== incoming.id)].slice(0, limit);
+}
+
+export function dedupToolActivityFeed(
+  feed: ToolActivityFeedItem[],
+  incoming: ToolActivityFeedItem,
+  limit = 40
+): ToolActivityFeedItem[] {
   return [incoming, ...feed.filter((item) => item.id !== incoming.id)].slice(0, limit);
 }

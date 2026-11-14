@@ -6,7 +6,7 @@
     "dev": "node server.ts",
     "build": "NODE_ENV=production next build",
     "start": "node server.ts",
-    "test": "node --experimental-strip-types --test lib/cortex-os-data.test.ts lib/db/persistence.test.ts lib/agent-os-logic.test.ts lib/runtime/cortex-runtime.test.ts",
+    "test": "node --experimental-strip-types --test lib/cortex-os-data.test.ts lib/db/persistence.test.ts lib/agent-os-logic.test.ts lib/runtime/cortex-runtime.test.ts lib/tools/tools.test.ts",
     "lint": "eslint .",
     "clean": "next clean"
   },

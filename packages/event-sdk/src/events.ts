@@ -99,6 +99,23 @@ export interface TerminalCommandExecutedEvent extends CortexEvent {
   targetAgentId: string;
 }
 
+export interface ToolExecutedEvent extends CortexEvent {
+  type: "tool.executed";
+  executionId: string;
+  toolName: string;
+  agentId: string;
+  studioId: string;
+  artifactId?: string;
+}
+
+export interface ToolDeniedEvent extends CortexEvent {
+  type: "tool.denied";
+  executionId: string;
+  toolName: string;
+  agentId: string;
+  reason: string;
+}
+
 export function buildCortexEvent<
   TPayload extends Record<string, unknown> = Record<string, unknown>,
 >(params: {

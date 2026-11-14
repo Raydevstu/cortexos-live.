@@ -352,6 +352,8 @@ export const CORTEX_EVENT_TYPES = [
   "provider.failed",
   "provider.failover",
   "terminal.command_executed",
+  "tool.executed",
+  "tool.denied",
 ] as const;
 export type CortexEventType = (typeof CORTEX_EVENT_TYPES)[number];
 

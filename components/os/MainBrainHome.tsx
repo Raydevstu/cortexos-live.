@@ -11,6 +11,7 @@ import {
   Plus,
   Search,
   Sparkles,
+  Wrench,
 } from "lucide-react";
 import { useAgentOS } from "@/lib/agent-os-store";
 import { AgentDockRosterStrip, getStatusVisual } from "@/components/os/AgentDockV2";
@@ -23,6 +24,7 @@ export default function MainBrainHome() {
     knowledgeFeed,
     artifactFeed,
     activityFeed,
+    toolActivityFeed,
     summonAgent,
     summonUtilityWorkspace,
     setMode,
@@ -57,6 +59,15 @@ export default function MainBrainHome() {
       ev.agentName.toLowerCase().includes(normalizedFilter) ||
       ev.task.toLowerCase().includes(normalizedFilter) ||
       ev.status.toLowerCase().includes(normalizedFilter)
+  );
+
+  const filteredTools = toolActivityFeed.filter(
+    (t) =>
+      !normalizedFilter ||
+      t.toolName.toLowerCase().includes(normalizedFilter) ||
+      t.agentName.toLowerCase().includes(normalizedFilter) ||
+      t.result.toLowerCase().includes(normalizedFilter) ||
+      t.artifactProduced.toLowerCase().includes(normalizedFilter)
   );
 
   return (
@@ -177,7 +188,7 @@ export default function MainBrainHome() {
 
         {/* ============================================================== */}
         {/* MAINBRAIN 3-COLUMN INTELLIGENCE STREAMS                        */}
-        {/* Knowledge Feed · Artifact Feed · Agent Activity Feed           */}
+        {/* Knowledge Feed · Artifact Feed · Agent & Tool Activity Feed    */}
         {/* ============================================================== */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 1. KNOWLEDGE FEED */}
@@ -303,70 +314,133 @@ export default function MainBrainHome() {
             </div>
           </section>
 
-          {/* 3. AGENT ACTIVITY FEED */}
-          <section
-            aria-label="Agent Activity Feed"
-            data-testid="agent-activity-feed"
-            className="space-y-3"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                <Activity className="w-4 h-4 text-violet-400" aria-hidden="true" />
-                <span>Agent Activity Feed</span>
-              </h2>
-              <button
-                type="button"
-                onClick={() => summonAgent("jarvis")}
-                className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-[#00ffa3]"
-              >
-                <span>Jarvis Mesh</span>
-                <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />
-              </button>
-            </div>
+          {/* 3. AGENT ACTIVITY FEED & TOOL ACTIVITY FEED */}
+          <div className="space-y-6">
+            {/* TOOL ACTIVITY FEED */}
+            <section
+              aria-label="Tool Activity Feed"
+              data-testid="tool-activity-feed"
+              className="space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-[#00ffa3]" aria-hidden="true" />
+                  <span>Tool Activity Feed</span>
+                </h2>
+                <span className="text-[11px] font-mono text-slate-400">
+                  {filteredTools.length} executions
+                </span>
+              </div>
 
-            <div className="divide-y divide-white/10 rounded-md bg-[#11141a] border border-white/10">
-              {filteredActivity.slice(0, 8).map((ev) => {
-                const vis = getStatusVisual(ev.status);
-                return (
-                  <article key={ev.id} className="p-3.5 space-y-1.5 hover:bg-white/[0.02] transition-colors">
+              <div className="divide-y divide-white/10 rounded-md bg-[#11141a] border border-white/10">
+                {filteredTools.slice(0, 6).map((toolItem) => (
+                  <article
+                    key={toolItem.id}
+                    data-testid={`tool-activity-item-${toolItem.toolName}`}
+                    className="p-3.5 space-y-1.5 hover:bg-white/[0.02] transition-colors"
+                  >
                     <div className="flex items-center justify-between gap-2 text-[11px] font-mono">
-                      <span className={`font-semibold ${vis.textClass}`}>
-                        {ev.agentName} · {ev.runtimeState || vis.label}
+                      <span className="font-semibold text-[#00ffa3]">
+                        {toolItem.toolName}
                       </span>
-                      <span className="text-slate-400 tabular-nums">{ev.timestamp}</span>
+                      <span className="text-slate-300 tabular-nums">
+                        {toolItem.executionTimeMs}ms · {toolItem.timestamp}
+                      </span>
                     </div>
-                    <h3 className="text-xs font-semibold text-[#e4e6eb] leading-snug">
-                      {ev.task}
-                    </h3>
-                    <p className="text-xs text-slate-400 leading-relaxed">{ev.summary}</p>
-                    {(ev.workflowType || ev.artifactTitle) && (
-                      <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
-                        <span className="text-sky-300 truncate">{ev.workflowType || "EventBus"}</span>
-                        {ev.artifactTitle && (
-                          <span className="text-teal-300 truncate text-right">{ev.artifactTitle}</span>
-                        )}
-                      </div>
-                    )}
-                    {ev.lastDecision && (
-                      <p className="text-[11px] text-slate-300 truncate">
-                        Decision: {ev.lastDecision}
-                      </p>
-                    )}
-                    <div className="pt-1 flex items-center justify-between text-[11px] text-slate-400">
-                      <span className="font-mono truncate">{ev.provider}</span>
+
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-slate-300">
+                      <span className="font-medium">Agent: {toolItem.agentName}</span>
+                      <span className="font-mono text-[10px] uppercase text-teal-300">
+                        {toolItem.category} · {toolItem.status}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Result: {toolItem.result}
+                    </p>
+
+                    <div className="pt-1 flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+                      <span className="text-sky-300 truncate">
+                        Artifact: {toolItem.artifactProduced}
+                      </span>
                       <button
                         type="button"
-                        onClick={() => summonAgent(ev.agentId)}
+                        onClick={() => summonAgent(toolItem.agentId)}
                         className="text-[#00ffa3] hover:underline shrink-0"
                       >
-                        Inspect Agent
+                        Inspect Studio
                       </button>
                     </div>
                   </article>
-                );
-              })}
-            </div>
-          </section>
+                ))}
+              </div>
+            </section>
+
+            {/* AGENT ACTIVITY FEED */}
+            <section
+              aria-label="Agent Activity Feed"
+              data-testid="agent-activity-feed"
+              className="space-y-3"
+            >
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-violet-400" aria-hidden="true" />
+                  <span>Agent Activity Feed</span>
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => summonAgent("jarvis")}
+                  className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-[#00ffa3]"
+                >
+                  <span>Jarvis Mesh</span>
+                  <ArrowUpRight className="w-3.5 h-3.5" aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="divide-y divide-white/10 rounded-md bg-[#11141a] border border-white/10">
+                {filteredActivity.slice(0, 6).map((ev) => {
+                  const vis = getStatusVisual(ev.status);
+                  return (
+                    <article key={ev.id} className="p-3.5 space-y-1.5 hover:bg-white/[0.02] transition-colors">
+                      <div className="flex items-center justify-between gap-2 text-[11px] font-mono">
+                        <span className={`font-semibold ${vis.textClass}`}>
+                          {ev.agentName} · {ev.runtimeState || vis.label}
+                        </span>
+                        <span className="text-slate-400 tabular-nums">{ev.timestamp}</span>
+                      </div>
+                      <h3 className="text-xs font-semibold text-[#e4e6eb] leading-snug">
+                        {ev.task}
+                      </h3>
+                      <p className="text-xs text-slate-400 leading-relaxed">{ev.summary}</p>
+                      {(ev.workflowType || ev.artifactTitle) && (
+                        <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+                          <span className="text-sky-300 truncate">{ev.workflowType || "EventBus"}</span>
+                          {ev.artifactTitle && (
+                            <span className="text-teal-300 truncate text-right">{ev.artifactTitle}</span>
+                          )}
+                        </div>
+                      )}
+                      {ev.lastDecision && (
+                        <p className="text-[11px] text-slate-300 truncate">
+                          Decision: {ev.lastDecision}
+                        </p>
+                      )}
+                      <div className="pt-1 flex items-center justify-between text-[11px] text-slate-400">
+                        <span className="font-mono truncate">{ev.provider}</span>
+                        <button
+                          type="button"
+                          onClick={() => summonAgent(ev.agentId)}
+                          className="text-[#00ffa3] hover:underline shrink-0"
+                        >
+                          Inspect Agent
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </div>

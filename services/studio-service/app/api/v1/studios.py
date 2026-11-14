@@ -241,3 +241,46 @@ async def transition_studio_artifact(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+
+
+@router.get("/{studio_id}/tools")
+async def list_studio_tools(
+    studio_id: str,
+    _: RequestContext = Depends(require_permission("project", "read")),
+    runtime: StudioRuntime = Depends(get_studio_runtime),
+):
+    await _ensure_bootstrapped(runtime)
+    try:
+        return runtime.list_studio_tools(studio_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/{studio_id}/tools/execute")
+async def execute_studio_tool_endpoint(
+    studio_id: str,
+    payload: dict,
+    ctx: RequestContext = Depends(require_permission("studio", "execute")),
+    runtime: StudioRuntime = Depends(get_studio_runtime),
+):
+    from cortexos_types import ToolExecutionRequest
+
+    await _ensure_bootstrapped(runtime)
+    try:
+        req = ToolExecutionRequest(
+            tool_name=str(payload.get("toolName") or payload.get("tool_name") or "docs.markdown_read"),
+            agent_id=str(payload.get("agentId") or studio_id),
+            studio_id=studio_id,
+            project_id=str(payload.get("projectId") or "proj-solar-crm"),
+            actor_id=ctx.subject_id,
+            parameters=dict(payload.get("parameters") or {}),
+        )
+        return runtime.execute_studio_tool(studio_id, req)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc

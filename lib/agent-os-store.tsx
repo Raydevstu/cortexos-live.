@@ -12,11 +12,13 @@ import React, {
 import {
   closeWorkspaceState,
   dedupActivityFeed,
+  dedupToolActivityFeed,
   DOCK_AGENTS_SEED,
   INITIAL_ACTIVITY_FEED,
   INITIAL_ARTIFACT_FEED,
   INITIAL_KNOWLEDGE_FEED,
   INITIAL_TERMINAL_HISTORY,
+  INITIAL_TOOL_ACTIVITY_FEED,
   mergeAgentTelemetry,
   parseTerminalCommand,
   PROJECT_CONTEXTS_SEED,
@@ -40,6 +42,7 @@ import {
   type RuntimeWorkflowRecord,
   type TerminalTraceEntry,
   type TerminalTraceStep,
+  type ToolActivityFeedItem,
   type WorkspaceKind,
   type WorkspaceMode,
   type WorkspaceWindowState,
@@ -73,6 +76,7 @@ interface AgentOSContextValue {
   knowledgeFeed: KnowledgeFeedItem[];
   artifactFeed: ArtifactFeedItem[];
   activityFeed: AgentActivityEvent[];
+  toolActivityFeed: ToolActivityFeedItem[];
 
   workflows: RuntimeWorkflowRecord[];
   workRequests: RuntimeWorkRequestRecord[];
@@ -90,6 +94,11 @@ interface AgentOSContextValue {
   dispatchWorkRequest: (
     studioId: DockAgentId,
     objective: string
+  ) => Promise<void>;
+  executeStudioTool: (
+    studioId: DockAgentId,
+    toolName: string,
+    parameters?: Record<string, unknown>
   ) => Promise<void>;
   conveneCouncil: (objective: string, studios?: DockAgentId[]) => Promise<void>;
   submitApprovalDecision: (params: {
@@ -137,6 +146,8 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
   const [knowledgeFeed, setKnowledgeFeed] = useState<KnowledgeFeedItem[]>(INITIAL_KNOWLEDGE_FEED);
   const [artifactFeed, setArtifactFeed] = useState<ArtifactFeedItem[]>(INITIAL_ARTIFACT_FEED);
   const [activityFeed, setActivityFeed] = useState<AgentActivityEvent[]>(INITIAL_ACTIVITY_FEED);
+  const [toolActivityFeed, setToolActivityFeed] =
+    useState<ToolActivityFeedItem[]>(INITIAL_TOOL_ACTIVITY_FEED);
 
   const [workflows, setWorkflows] = useState<RuntimeWorkflowRecord[]>([]);
   const [workRequests, setWorkRequests] = useState<RuntimeWorkRequestRecord[]>([]);
@@ -205,6 +216,9 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
       }
       if (Array.isArray(snap.knowledgeFeed) && snap.knowledgeFeed.length > 0) {
         setKnowledgeFeed(snap.knowledgeFeed);
+      }
+      if (Array.isArray(snap.toolActivityFeed) && snap.toolActivityFeed.length > 0) {
+        setToolActivityFeed(snap.toolActivityFeed);
       }
     }
     if (snap.projectId && snap.phase) {
@@ -293,6 +307,15 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             const data = frame.payload as { activity?: AgentActivityEvent };
             if (data.activity) {
               setActivityFeed((prev) => dedupActivityFeed(prev, data.activity!, 30));
+            }
+            return;
+          }
+
+          if (frame.type === "tool.executed") {
+            if (streamPausedRef.current) return;
+            const item = frame.payload as ToolActivityFeedItem;
+            if (item && item.id) {
+              setToolActivityFeed((prev) => dedupToolActivityFeed(prev, item, 40));
             }
             return;
           }
@@ -493,6 +516,30 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     [activeProjectId, applySnapshot, selectedModel, selectedProvider]
   );
 
+  const executeStudioTool = useCallback(
+    async (
+      studioId: DockAgentId,
+      toolName: string,
+      parameters?: Record<string, unknown>
+    ) => {
+      const res = await fetch("/api/runtime/tools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          studioId,
+          toolName,
+          parameters: parameters ?? {},
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { snapshot: RuntimePresenceSnapshot };
+        applySnapshot(data.snapshot);
+      }
+    },
+    [activeProjectId, applySnapshot]
+  );
+
   const conveneCouncil = useCallback(
     async (objective: string, studios?: DockAgentId[]) => {
       const res = await fetch("/api/runtime/council", {
@@ -619,11 +666,15 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             workRequest: RuntimeWorkRequestRecord;
             workflow: RuntimeWorkflowRecord;
             artifact: ArtifactFeedItem;
+            toolExecution?: { toolName: string; durationMs: number; resultSummary: string };
             summary: string;
             snapshot: RuntimePresenceSnapshot;
           };
 
           applySnapshot(data.snapshot);
+
+          const executedToolName = data.toolExecution?.toolName || targetAgent.tools[0];
+          const executedDuration = data.toolExecution?.durationMs ?? 12;
 
           const steps: TerminalTraceStep[] = [
             {
@@ -632,8 +683,8 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             },
             {
               phase: "Executing",
-              detail: `${targetAgent.name} executed via ${selectedProvider}/${selectedModel} inside ${data.workflow.taskQueue}.`,
-              tool: targetAgent.tools[0],
+              detail: `${targetAgent.name} executed tool '${executedToolName}' (${executedDuration}ms) via ${selectedProvider}/${selectedModel} inside ${data.workflow.taskQueue}.`,
+              tool: executedToolName,
             },
             {
               phase: "Reviewing",
@@ -642,7 +693,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
             },
             {
               phase: "Completed",
-              detail: `Emitted "${data.artifact.title}" and broadcast Event SDK telemetry via WebSocket.`,
+              detail: `Emitted "${data.artifact.title}", Knowledge Candidate, and Audit Entry via WebSocket.`,
             },
           ];
 
@@ -663,7 +714,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
               `3. Artifacts: ${data.snapshot.artifactFeed.slice(0, 2).map((a) => a.title).join(", ")}`,
               `4. Workflow: ${data.workflow.workflowType} (${data.workflow.id})`,
               `5. Knowledge: ${data.snapshot.knowledgeFeed.slice(0, 2).map((k) => k.title).join(", ")}`,
-              `6. Studio: ${targetAgent.studioId}`,
+              `6. Studio: ${targetAgent.studioId} (tool=${executedToolName})`,
             ],
             steps,
             outputSummary: data.summary,
@@ -698,6 +749,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     knowledgeFeed,
     artifactFeed,
     activityFeed,
+    toolActivityFeed,
     workflows,
     workRequests,
     pendingApprovals,
@@ -710,6 +762,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
     ingestKnowledgeItem,
     advanceProjectPhase,
     dispatchWorkRequest,
+    executeStudioTool,
     conveneCouncil,
     submitApprovalDecision,
     triggerProviderFailover,

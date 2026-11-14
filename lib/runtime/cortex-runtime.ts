@@ -3,13 +3,15 @@ import {
   CortexEventBus,
   buildCortexEvent,
 } from "../../packages/event-sdk/src/index.ts";
-import type { CortexEvent } from "../../packages/shared-types/src/index.ts";
+import type { CortexEvent, ToolAuditEntry } from "../../packages/shared-types/src/index.ts";
 import {
   DOCK_AGENTS_SEED,
   INITIAL_ACTIVITY_FEED,
   INITIAL_ARTIFACT_FEED,
   INITIAL_KNOWLEDGE_FEED,
+  INITIAL_TOOL_ACTIVITY_FEED,
   dedupActivityFeed,
+  dedupToolActivityFeed,
   mergeAgentTelemetry,
   type AgentActivityEvent,
   type AgentLifecycleStatus,
@@ -24,10 +26,17 @@ import {
   type RuntimePresenceSnapshot,
   type RuntimeWorkRequestRecord,
   type RuntimeWorkflowRecord,
+  type ToolActivityFeedItem,
 } from "../agent-os-logic.ts";
 import { sha256Hex } from "../cortex-os-data.ts";
 import { dbQuery, dbTransaction, ensureDatabaseMigrated, toUuid } from "../db/client.ts";
 import { processPendingLibrarianEvents } from "../db/librarian-pipeline.ts";
+import {
+  getToolRegistry,
+  selectDefaultStudioTool,
+  type ToolExecutionRecord,
+  type ToolManifest,
+} from "../tools/index.ts";
 import { getWsHub } from "./ws-hub.ts";
 
 export const LIFECYCLE_PHASE_SEQUENCE: readonly DockAgentId[] = [
@@ -229,6 +238,7 @@ export class CortexRuntimeEngine {
   private pendingApprovals: PendingApprovalItem[] = [];
   private councilReport: RuntimeCouncilReport | null = null;
   private activityFeed: AgentActivityEvent[] = [...INITIAL_ACTIVITY_FEED];
+  private toolActivityFeed: ToolActivityFeedItem[] = [...INITIAL_TOOL_ACTIVITY_FEED];
   private artifactFeed: ArtifactFeedItem[] = [...INITIAL_ARTIFACT_FEED];
   private knowledgeFeed: KnowledgeFeedItem[] = [...INITIAL_KNOWLEDGE_FEED];
 
@@ -482,6 +492,7 @@ export class CortexRuntimeEngine {
       }),
       councilReport: this.councilReport,
       activityFeed: [...this.activityFeed],
+      toolActivityFeed: [...this.toolActivityFeed],
       artifactFeed: [...this.artifactFeed],
       knowledgeFeed: [...this.knowledgeFeed],
       updatedAt: new Date().toISOString(),
@@ -492,6 +503,270 @@ export class CortexRuntimeEngine {
     getWsHub().broadcast("presence.snapshot", this.getSnapshot(projectId));
   }
 
+  listTools(filter?: { studioId?: string; category?: "github" | "filesystem" | "documentation" | "terminal" }): ToolManifest[] {
+    return getToolRegistry().listManifests(filter);
+  }
+
+  listToolExecutions(projectId?: string): {
+    executions: ToolExecutionRecord[];
+    feed: ToolActivityFeedItem[];
+    toolActivityFeed: ToolActivityFeedItem[];
+  } {
+    const feed = [...this.toolActivityFeed];
+    return {
+      executions: getToolRegistry().listExecutions(projectId),
+      feed,
+      toolActivityFeed: feed,
+    };
+  }
+
+  async executeTool(params: {
+    toolName: string;
+    studioId: DockAgentId;
+    agentId?: string;
+    projectId?: string;
+    workRequestId?: string;
+    workflowId?: string;
+    parameters?: Record<string, unknown>;
+  }): Promise<{
+    execution: ToolExecutionRecord;
+    auditEntry: ToolAuditEntry;
+    toolActivity: ToolActivityFeedItem;
+    artifact: ArtifactFeedItem;
+    knowledgeCandidate: KnowledgeFeedItem;
+    snapshot: RuntimePresenceSnapshot;
+  }> {
+    await this.bootstrap();
+    const projectId = params.projectId || this.activeProjectId;
+    const studioId: DockAgentId = params.studioId in AGENT_LABELS ? params.studioId : "design";
+    const agentId: DockAgentId =
+      params.agentId && params.agentId in AGENT_LABELS
+        ? (params.agentId as DockAgentId)
+        : studioId;
+    const agentName = AGENT_LABELS[agentId];
+    const wfId = params.workflowId || `wf-tool-${Date.now().toString().slice(-6)}`;
+
+    this.updateAgent(
+      agentId,
+      {
+        status: "executing",
+        currentTask: `Executing tool ${params.toolName}`,
+        currentWorkflow: `AgentExecutionWorkflow · ${wfId}`,
+        runtimeState: `executing · ${params.toolName}`,
+      },
+      true
+    );
+
+    const registry = getToolRegistry();
+    const { record, auditEntry, artifactPayload } = await registry.execute({
+      toolName: params.toolName,
+      agentId,
+      studioId,
+      projectId,
+      workRequestId: params.workRequestId,
+      workflowId: wfId,
+      parameters: params.parameters ?? {},
+    });
+
+    const fallbackTitle = artifactPayload?.title ?? `Tool Output: ${record.toolName}`;
+    const fallbackMarkdown =
+      artifactPayload?.markdown ??
+      `# ${fallbackTitle}\n\n- **Status:** ${record.status}\n- **Summary:** ${record.resultSummary}\n`;
+    let persistedArtId = `art-tool-${Date.now().toString().slice(-6)}`;
+    const hash = sha256Hex(fallbackMarkdown);
+
+    if (record.status === "completed" && artifactPayload) {
+      try {
+        const dbProjectId = toUuid(projectId);
+        const persisted = await dbTransaction(async (tx) => {
+          const studioRes = await tx.query<{ id: string }>(
+            "SELECT id FROM studios WHERE slug = $1 LIMIT 1",
+            [studioId === "jarvis" || studioId === "librarian" ? "architecture" : studioId]
+          );
+          const dbStudioId =
+            studioRes.rows[0]?.id ||
+            (await tx.query<{ id: string }>("SELECT id FROM studios LIMIT 1")).rows[0]?.id;
+
+          const artIdRes = await tx.query<{ id: string }>("SELECT new_object('artifact') AS id");
+          const artUuid = artIdRes.rows[0].id;
+          await tx.query(
+            `INSERT INTO artifacts (
+               id, project_id, studio_id, artifact_type, schema_version,
+               title, summary, status, version, storage_path, content_hash, body, markdown_content
+             )
+             VALUES ($1, $2, $3, $4, '1', $5, $6, 'in_review'::artifact_status, 1, $7, $8, $9::jsonb, $10)
+             ON CONFLICT (project_id, artifact_type, title, version)
+             DO UPDATE SET summary = EXCLUDED.summary, content_hash = EXCLUDED.content_hash, markdown_content = EXCLUDED.markdown_content, updated_at = now()`,
+            [
+              artUuid,
+              dbProjectId,
+              dbStudioId,
+              artifactPayload.artifactType,
+              artifactPayload.title,
+              record.resultSummary,
+              `brain/artifacts/${studioId}/${artUuid}.md`,
+              hash,
+              JSON.stringify({
+                studio_slug: studioId,
+                tool_name: record.toolName,
+                execution_id: record.id,
+                audit_entry_id: record.auditEntryId,
+              }),
+              artifactPayload.markdown,
+            ]
+          );
+
+          const kcIdRes = await tx.query<{ id: string }>("SELECT new_object('concept') AS id");
+          await tx.query(
+            `INSERT INTO concepts (id, name, summary, domain, aliases, review_state, confidence)
+             VALUES ($1, $2, $3, $4, $5::text[], 'unreviewed'::review_state, 0.92)
+             ON CONFLICT (id) DO NOTHING`,
+            [
+              kcIdRes.rows[0].id,
+              `${artifactPayload.knowledgeTitle} (${artUuid.slice(0, 6)})`,
+              artifactPayload.knowledgeSummary,
+              studioId,
+              [record.toolName, projectId],
+            ]
+          );
+
+          await tx.query(
+            `INSERT INTO events (event_type, aggregate_type, aggregate_id, payload, idempotency_key, status)
+             VALUES ('artifact_created', 'artifact', $1, $2::jsonb, $3, 'pending'::event_status)
+             ON CONFLICT (idempotency_key) DO NOTHING`,
+            [
+              artUuid,
+              JSON.stringify({
+                title: artifactPayload.title,
+                studio: studioId,
+                toolName: record.toolName,
+                executionId: record.id,
+              }),
+              `tool_artifact:${record.id}`,
+            ]
+          );
+
+          return { artUuid, kcUuid: kcIdRes.rows[0].id };
+        });
+
+        persistedArtId = persisted.artUuid;
+        record.artifactId = persistedArtId;
+        await processPendingLibrarianEvents("librarian-tool-worker", 3).catch(() => null);
+      } catch {
+        // Non-fatal fallback in isolated test mode
+      }
+    }
+
+    const persistedArtifactItem: ArtifactFeedItem = {
+      id: persistedArtId,
+      title: fallbackTitle,
+      artifactType: artifactPayload?.artifactType ?? "tool_execution",
+      studioId,
+      status: "review",
+      version: "1.0.0",
+      projectId,
+      checksumPrefix: hash.slice(0, 8),
+      summary: record.resultSummary.slice(0, 180),
+      updatedAt: "Just now",
+    };
+    this.artifactFeed = [
+      persistedArtifactItem,
+      ...this.artifactFeed.filter((a) => a.id !== persistedArtifactItem.id),
+    ].slice(0, 24);
+
+    const knowledgeCandidateItem: KnowledgeFeedItem = {
+      id: `kc-${record.id}`,
+      kind: "concept",
+      title: artifactPayload?.knowledgeTitle
+        ? `Knowledge Candidate · ${artifactPayload.knowledgeTitle}`
+        : `Knowledge Candidate · ${record.toolName}`,
+      summary: artifactPayload?.knowledgeSummary ?? record.resultSummary,
+      projectId,
+      author: `${agentName} (${record.toolName})`,
+      updatedAt: "Just now",
+      connectionsCount: 4,
+    };
+    this.knowledgeFeed = [
+      knowledgeCandidateItem,
+      ...this.knowledgeFeed.filter((k) => k.id !== knowledgeCandidateItem.id),
+    ].slice(0, 24);
+
+    const toolActivity: ToolActivityFeedItem = {
+      id: record.id,
+      toolName: record.toolName,
+      category: record.category,
+      executionTimeMs: record.durationMs,
+      agentId,
+      agentName,
+      studioId,
+      status: record.status,
+      inputSummary: record.inputSummary,
+      result: record.resultSummary,
+      artifactId: persistedArtifactItem.id,
+      artifactProduced: persistedArtifactItem.title,
+      knowledgeCandidateTitle: knowledgeCandidateItem.title,
+      auditEntryId: record.auditEntryId,
+      checksumPrefix: record.checksum.slice(0, 8),
+      timestamp: nowTimeLabel(),
+    };
+
+    this.toolActivityFeed = dedupToolActivityFeed(this.toolActivityFeed, toolActivity, 40);
+
+    const decisionMsg =
+      record.status === "completed"
+        ? `Tool ${record.toolName} (${record.durationMs}ms) -> ${persistedArtifactItem.title}`
+        : `Sandbox blocked ${record.toolName}: ${record.resultSummary}`;
+
+    this.updateAgent(
+      agentId,
+      {
+        status: record.status === "completed" ? "completed" : "blocked",
+        currentTask: `Tool ${record.toolName}: ${record.inputSummary}`,
+        currentArtifact: persistedArtifactItem.title,
+        lastArtifact: persistedArtifactItem.title,
+        currentWorkflow: `AgentExecutionWorkflow · ${wfId}`,
+        runtimeState: `${record.status} · ${record.toolName} (${record.durationMs}ms)`,
+        lastDecision: decisionMsg,
+      },
+      true
+    );
+
+    await this.eventBus.publish(
+      buildCortexEvent({
+        type: record.status === "completed" ? "tool.executed" : "tool.denied",
+        source: `tool-registry:${studioId}`,
+        projectId,
+        payload: {
+          executionId: record.id,
+          toolName: record.toolName,
+          category: record.category,
+          agentId,
+          studioId,
+          status: record.status === "completed" ? "completed" : "blocked",
+          task: `${record.toolName} (${record.durationMs}ms)`,
+          summary: record.resultSummary,
+          artifactId: persistedArtifactItem.id,
+          artifactTitle: persistedArtifactItem.title,
+          workflowId: wfId,
+          workflowType: "AgentExecutionWorkflow",
+          decision: decisionMsg,
+        },
+      })
+    );
+
+    getWsHub().broadcast("tool.executed", toolActivity);
+    this.broadcastFullSnapshot(projectId);
+
+    return {
+      execution: record,
+      auditEntry,
+      toolActivity,
+      artifact: persistedArtifactItem,
+      knowledgeCandidate: knowledgeCandidateItem,
+      snapshot: this.getSnapshot(projectId),
+    };
+  }
+
   async dispatchWorkRequest(params: {
     projectId?: string;
     studioId: DockAgentId;
@@ -499,10 +774,13 @@ export class CortexRuntimeEngine {
     preferredProvider?: string;
     preferredModel?: string;
     command?: string;
+    toolName?: string;
+    toolParameters?: Record<string, unknown>;
   }): Promise<{
     workRequest: RuntimeWorkRequestRecord;
     workflow: RuntimeWorkflowRecord;
     artifact: ArtifactFeedItem;
+    toolExecution?: ToolExecutionRecord;
     summary: string;
     snapshot: RuntimePresenceSnapshot;
   }> {
@@ -594,7 +872,22 @@ export class CortexRuntimeEngine {
       true
     );
 
-    await sleep(90);
+    await sleep(60);
+
+    // 3b. Invoke Real Tool Execution via ToolRegistry during Studio Execution
+    const chosenTool = params.toolName
+      ? { toolName: params.toolName, parameters: params.toolParameters ?? {} }
+      : selectDefaultStudioTool(targetId, objective);
+
+    const toolRun = await getToolRegistry().execute({
+      toolName: chosenTool.toolName,
+      agentId: targetId,
+      studioId: targetId,
+      projectId,
+      workRequestId: wrId,
+      workflowId,
+      parameters: chosenTool.parameters,
+    });
 
     this.updateAgent(
       targetId,
@@ -604,7 +897,7 @@ export class CortexRuntimeEngine {
         currentWorkflow: `${workflowType} · ${workflowId}`,
         provider,
         model,
-        runtimeState: `executing · ${provider}/${model}`,
+        runtimeState: `executing · ${chosenTool.toolName} (${toolRun.record.durationMs}ms)`,
         workload: 88,
       },
       true
@@ -621,7 +914,7 @@ export class CortexRuntimeEngine {
           workRequestId: wrId,
           status: "executing",
           task: objective,
-          summary: `${targetName} executing via ${provider} (${model}) inside ${workflowType}.`,
+          summary: `${targetName} executed ${chosenTool.toolName} (${toolRun.record.durationMs}ms): ${toolRun.record.resultSummary}`,
           workflowId,
           workflowType,
         },
@@ -629,15 +922,16 @@ export class CortexRuntimeEngine {
     );
 
     // Optional live Gemini generation if configured
-    let synthesizedSummary = `${targetName} (${provider} · ${model}) completed "${objective}" through ${workflowType} with schema & provenance verification.`;
+    let synthesizedSummary = `${targetName} (${provider} · ${model}) executed tool '${chosenTool.toolName}' (${toolRun.record.durationMs}ms) — ${toolRun.record.resultSummary}`;
     let artifactTitle =
-      targetId === "design"
+      toolRun.artifactPayload?.title ||
+      (targetId === "design"
         ? `Design Spec: ${objective.slice(0, 44)}`
         : targetId === "architecture"
         ? `Architecture Contract: ${objective.slice(0, 38)}`
         : targetId === "librarian"
         ? `Wiki Synthesis: ${objective.slice(0, 42)}`
-        : `${targetName} Deliverable: ${objective.slice(0, 38)}`;
+        : `${targetName} Deliverable: ${objective.slice(0, 38)}`);
 
     const apiKey = process.env.GEMINI_API_KEY?.trim();
     if (apiKey && apiKey !== "MY_GEMINI_API_KEY") {
@@ -668,12 +962,15 @@ export class CortexRuntimeEngine {
       true
     );
 
-    // 5. Persist WorkRequest, Artifact, Decision, Outbox Event & Council Trace in PostgreSQL
+    // 5. Persist WorkRequest, Artifact, Decision, Knowledge Candidate, Outbox Event & Audit in PostgreSQL
     let persistedArtId = `art-${Date.now().toString().slice(-6)}`;
     let persistedChecksum = sha256Hex(synthesizedSummary).slice(0, 8);
+    let knowledgeCandidateId = `kc-${Date.now().toString().slice(-6)}`;
     try {
       const dbProjectId = toUuid(projectId);
-      const artContent = `# ${artifactTitle}\n\n**Studio:** ${targetName}\n**Workflow:** ${workflowType} (${workflowId})\n**Provider:** ${provider} / ${model}\n\n## Objective\n${objective}\n\n## Verified Deliverable\n${synthesizedSummary}\n`;
+      const artContent =
+        toolRun.artifactPayload?.markdown ||
+        `# ${artifactTitle}\n\n**Studio:** ${targetName}\n**Tool Executed:** ${chosenTool.toolName} (${toolRun.record.durationMs}ms)\n**Workflow:** ${workflowType} (${workflowId})\n**Provider:** ${provider} / ${model}\n\n## Objective\n${objective}\n\n## Verified Deliverable\n${synthesizedSummary}\n`;
       const hash = sha256Hex(artContent);
       persistedChecksum = hash.slice(0, 8);
 
@@ -701,7 +998,9 @@ export class CortexRuntimeEngine {
              id, project_id, studio_id, work_request_id, artifact_type, schema_version,
              title, summary, status, version, storage_path, content_hash, body, markdown_content
            )
-           VALUES ($1, $2, $3, $4, $5, '1', $6, $7, 'in_review'::artifact_status, 1, $8, $9, $10::jsonb, $11)`,
+           VALUES ($1, $2, $3, $4, $5, '1', $6, $7, 'in_review'::artifact_status, 1, $8, $9, $10::jsonb, $11)
+           ON CONFLICT (project_id, artifact_type, title, version)
+           DO UPDATE SET summary = EXCLUDED.summary, content_hash = EXCLUDED.content_hash, markdown_content = EXCLUDED.markdown_content, updated_at = now()`,
           [
             artUuid,
             dbProjectId,
@@ -712,8 +1011,28 @@ export class CortexRuntimeEngine {
             synthesizedSummary,
             `brain/artifacts/${targetId}/${artUuid}.md`,
             hash,
-            JSON.stringify({ studio_slug: targetId, workflow_id: workflowId }),
+            JSON.stringify({
+              studio_slug: targetId,
+              workflow_id: workflowId,
+              tool_name: chosenTool.toolName,
+              tool_execution_id: toolRun.record.id,
+            }),
             artContent,
+          ]
+        );
+
+        const conceptIdRes = await tx.query<{ id: string }>("SELECT new_object('concept') AS id");
+        const conceptUuid = conceptIdRes.rows[0].id;
+        await tx.query(
+          `INSERT INTO concepts (id, name, summary, domain, aliases, review_state, confidence)
+           VALUES ($1, $2, $3, $4, $5::text[], 'unreviewed'::review_state, 0.90)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            conceptUuid,
+            `Knowledge Candidate: ${chosenTool.toolName} (${artUuid.slice(0, 8)})`,
+            synthesizedSummary,
+            targetId,
+            [chosenTool.toolName, targetId],
           ]
         );
 
@@ -725,7 +1044,7 @@ export class CortexRuntimeEngine {
             decIdRes.rows[0].id,
             dbProjectId,
             `Decision: ${artifactTitle}`,
-            `Adopted ${targetName} Studio output via ${workflowType}`,
+            `Adopted ${targetName} Studio output via ${workflowType} & ${chosenTool.toolName}`,
             synthesizedSummary,
             `Jarvis & ${targetName}`,
           ]
@@ -737,14 +1056,20 @@ export class CortexRuntimeEngine {
            ON CONFLICT (idempotency_key) DO NOTHING`,
           [
             artUuid,
-            JSON.stringify({ title: artifactTitle, studio: targetId, workflowId }),
+            JSON.stringify({
+              title: artifactTitle,
+              studio: targetId,
+              workflowId,
+              toolName: chosenTool.toolName,
+            }),
             `artifact_created:${artUuid}`,
           ]
         );
 
-        return { artUuid };
+        return { artUuid, conceptUuid };
       });
       persistedArtId = persisted.artUuid;
+      knowledgeCandidateId = persisted.conceptUuid;
 
       // Trigger Librarian pipeline indexing silently without failing dispatch if offline
       await processPendingLibrarianEvents("librarian-realtime-worker", 5).catch(() => null);
@@ -752,7 +1077,7 @@ export class CortexRuntimeEngine {
       console.warn("[CortexRuntime] DB persistence warning:", (dbErr as Error).message);
     }
 
-    // 6. Complete artifact, approval item, workflow, workRequest & broadcast Event SDK events
+    // 6. Complete artifact, knowledge candidate, tool activity feed, approval item, workflow, workRequest & broadcast Event SDK events
     const artifactItem: ArtifactFeedItem = {
       id: persistedArtId,
       title: artifactTitle,
@@ -771,6 +1096,48 @@ export class CortexRuntimeEngine {
       updatedAt: "Just now",
     };
     this.artifactFeed = [artifactItem, ...this.artifactFeed.filter((a) => a.id !== artifactItem.id)].slice(0, 24);
+
+    const knowledgeItem: KnowledgeFeedItem = {
+      id: knowledgeCandidateId,
+      kind: "concept",
+      title: `Knowledge Candidate · ${chosenTool.toolName}`,
+      summary: synthesizedSummary.slice(0, 200),
+      projectId,
+      author: `${targetName} Studio (${chosenTool.toolName})`,
+      connectionsCount: 3,
+      updatedAt: "Just now",
+    };
+    this.knowledgeFeed = [
+      knowledgeItem,
+      ...this.knowledgeFeed.filter((k) => k.id !== knowledgeItem.id),
+    ].slice(0, 24);
+
+    toolRun.record.artifactId = persistedArtId;
+    toolRun.record.artifactTitle = artifactTitle;
+    toolRun.record.knowledgeCandidateTitle = knowledgeItem.title;
+
+    const toolFeedItem: ToolActivityFeedItem = {
+      id: toolRun.record.id,
+      toolName: chosenTool.toolName,
+      category: toolRun.record.category || "filesystem",
+      executionTimeMs: toolRun.record.durationMs,
+      agentId: targetId,
+      agentName: `${targetName} Studio`,
+      studioId: targetId,
+      status: toolRun.record.status === "denied" ? "denied" : toolRun.record.status === "failed" ? "failed" : "completed",
+      result: toolRun.record.resultSummary,
+      artifactProduced: artifactTitle,
+      artifactId: persistedArtId,
+      knowledgeCandidateTitle: knowledgeItem.title,
+      auditEntryId: toolRun.record.auditEntryId,
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      }),
+    };
+    this.toolActivityFeed = dedupToolActivityFeed(this.toolActivityFeed, toolFeedItem, 40);
+    getWsHub().broadcast("tool.executed", toolFeedItem);
 
     const approvalItem: PendingApprovalItem = {
       id: `appr-${persistedArtId.slice(0, 8)}`,
@@ -801,7 +1168,7 @@ export class CortexRuntimeEngine {
     };
     this.upsertWorkflow(completedWf);
 
-    const decisionText = `Verified "${artifactTitle}" (${targetName} · ${provider}/${model})`;
+    const decisionText = `Verified "${artifactTitle}" via ${chosenTool.toolName} (${targetName} · ${provider}/${model})`;
     this.updateAgent(
       targetId,
       {
@@ -812,7 +1179,7 @@ export class CortexRuntimeEngine {
         currentWorkflow: `${workflowType} · ${workflowId}`,
         provider,
         model,
-        runtimeState: "completed · Indexed in MainBrain",
+        runtimeState: `completed · ${chosenTool.toolName} (${toolRun.record.durationMs}ms)`,
         lastDecision: decisionText,
         workload: 38,
       },
@@ -843,6 +1210,8 @@ export class CortexRuntimeEngine {
           studioId: targetId,
           artifactId: persistedArtId,
           artifactTitle,
+          toolName: chosenTool.toolName,
+          executionTimeMs: toolRun.record.durationMs,
           status: "completed",
           task: objective,
           summary: synthesizedSummary,
@@ -859,6 +1228,7 @@ export class CortexRuntimeEngine {
       workRequest: completedWr,
       workflow: completedWf,
       artifact: artifactItem,
+      toolExecution: toolRun.record,
       summary: synthesizedSummary,
       snapshot: this.getSnapshot(projectId),
     };

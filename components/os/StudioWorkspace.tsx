@@ -12,13 +12,204 @@ const DESIGN_TOKEN_PREVIEW = [
   { token: "--ink-primary", value: "#E4E6EB", contrast: "15.40:1 AAA", role: "Headline & Primary Ink" },
 ];
 
+const STUDIO_REGISTRY_TOOLS: Record<
+  DockAgentId,
+  Array<{ toolName: string; label: string; params: Record<string, unknown> }>
+> = {
+  design: [
+    {
+      toolName: "fs.artifact_export",
+      label: "fs.artifact_export",
+      params: {
+        title: "Design Studio Wireframe & WCAG Token Spec",
+        artifactType: "wireframe",
+        content: "# Design Studio Wireframe Spec\n\n- 12/8/4 Spatial Grid\n- WCAG 2.1 AA Verified\n",
+      },
+    },
+    {
+      toolName: "docs.markdown_read",
+      label: "docs.markdown_read",
+      params: { path: "README.md" },
+    },
+    {
+      toolName: "fs.file_write",
+      label: "fs.file_write",
+      params: {
+        path: "artifacts/design/tokens.json",
+        content: JSON.stringify({ canvas: "#090B0F", accent: "#00FFA3" }, null, 2),
+      },
+    },
+    {
+      toolName: "fs.dir_read",
+      label: "fs.dir_read",
+      params: { path: "." },
+    },
+  ],
+  architecture: [
+    {
+      toolName: "docs.openapi_read",
+      label: "docs.openapi_read",
+      params: { service: "studio-service" },
+    },
+    {
+      toolName: "fs.artifact_export",
+      label: "fs.artifact_export",
+      params: {
+        title: "Architecture Studio ADR & Event Contract",
+        artifactType: "architecture_spec",
+        content: "# Architecture Studio ADR\n\n- Event SDK Idempotency\n- ToolRegistry Sandbox\n",
+      },
+    },
+    {
+      toolName: "github.repo_search",
+      label: "github.repo_search",
+      params: { query: "CortexOS" },
+    },
+    {
+      toolName: "docs.wiki_read",
+      label: "docs.wiki_read",
+      params: { slug: "architecture" },
+    },
+  ],
+  development: [
+    {
+      toolName: "github.branch_manage",
+      label: "github.branch_manage",
+      params: { action: "create", branch: "feat/sprint8-tools" },
+    },
+    {
+      toolName: "github.commit_create",
+      label: "github.commit_create",
+      params: {
+        message: "feat(execution): commit studio implementation module",
+        files: [
+          {
+            path: "src/execution_module.ts",
+            content: "export const executionLayerReady = true;\n",
+          },
+        ],
+      },
+    },
+    {
+      toolName: "github.pr_create",
+      label: "github.pr_create",
+      params: {
+        title: "feat(execution): Sprint 8 Tool Registry & Sandbox",
+        sourceBranch: "feat/sprint8-tools",
+        targetBranch: "main",
+      },
+    },
+    {
+      toolName: "terminal.exec",
+      label: "terminal.exec",
+      params: { command: "git status --short" },
+    },
+  ],
+  qa: [
+    {
+      toolName: "terminal.exec",
+      label: "terminal.exec",
+      params: { command: "git status --short" },
+    },
+    {
+      toolName: "docs.artifact_read",
+      label: "docs.artifact_read",
+      params: { query: "Design" },
+    },
+    {
+      toolName: "docs.openapi_read",
+      label: "docs.openapi_read",
+      params: { service: "jarvis-service" },
+    },
+    {
+      toolName: "fs.artifact_export",
+      label: "fs.artifact_export",
+      params: {
+        title: "QA Studio Verification Matrix",
+        artifactType: "qa_report",
+        content: "# QA Studio Verification Matrix\n\n- ToolRegistry permissions verified\n",
+      },
+    },
+  ],
+  discovery: [
+    {
+      toolName: "docs.wiki_read",
+      label: "docs.wiki_read",
+      params: { slug: "discovery" },
+    },
+    {
+      toolName: "docs.markdown_read",
+      label: "docs.markdown_read",
+      params: { path: "README.md" },
+    },
+  ],
+  product: [
+    {
+      toolName: "docs.artifact_read",
+      label: "docs.artifact_read",
+      params: { query: "Spec" },
+    },
+    {
+      toolName: "fs.artifact_export",
+      label: "fs.artifact_export",
+      params: {
+        title: "Product Studio PRD Cutline",
+        artifactType: "prd",
+        content: "# Product PRD\n\n- Real Tool Execution Verified\n",
+      },
+    },
+  ],
+  release: [
+    {
+      toolName: "github.pr_create",
+      label: "github.pr_create",
+      params: {
+        title: "chore(release): promote verified sprint build",
+        sourceBranch: "main",
+        targetBranch: "main",
+      },
+    },
+    {
+      toolName: "terminal.exec",
+      label: "terminal.exec",
+      params: { command: "git status --short" },
+    },
+  ],
+  jarvis: [
+    {
+      toolName: "docs.artifact_read",
+      label: "docs.artifact_read",
+      params: { query: "" },
+    },
+    {
+      toolName: "terminal.exec",
+      label: "terminal.exec",
+      params: { command: "git status --short" },
+    },
+  ],
+  librarian: [
+    {
+      toolName: "docs.wiki_read",
+      label: "docs.wiki_read",
+      params: { slug: "" },
+    },
+    {
+      toolName: "docs.markdown_read",
+      label: "docs.markdown_read",
+      params: { path: "README.md" },
+    },
+  ],
+};
+
 export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
   const {
     agents,
     activeProject,
     artifactFeed,
     activityFeed,
+    toolActivityFeed,
     dispatchWorkRequest,
+    executeStudioTool,
   } = useAgentOS();
 
   const agent = agents.find((a) => a.id === agentId);
@@ -31,11 +222,14 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
     "overview" | "wireframes" | "tokens" | "flows"
   >("overview");
   const [isDispatching, setIsDispatching] = useState(false);
+  const [runningToolName, setRunningToolName] = useState<string | null>(null);
 
   if (!agent) return null;
 
   const studioArtifacts = artifactFeed.filter((a) => a.studioId === agentId);
   const studioActivity = activityFeed.filter((a) => a.agentId === agentId).slice(0, 6);
+  const studioToolRuns = toolActivityFeed.filter((t) => t.agentId === agentId).slice(0, 5);
+  const boundRegistryTools = STUDIO_REGISTRY_TOOLS[agentId] ?? STUDIO_REGISTRY_TOOLS.design;
 
   const handleExecuteStudio = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +239,19 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
       await dispatchWorkRequest(agent.id, objective.trim());
     } finally {
       setIsDispatching(false);
+    }
+  };
+
+  const handleInvokeTool = async (
+    toolName: string,
+    params: Record<string, unknown>
+  ) => {
+    if (runningToolName) return;
+    setRunningToolName(toolName);
+    try {
+      await executeStudioTool(agent.id, toolName, params);
+    } finally {
+      setRunningToolName(null);
     }
   };
 
@@ -188,6 +395,62 @@ export default function StudioWorkspace({ agentId }: { agentId: DockAgentId }) {
           )}
         </div>
       )}
+
+      {/* Studio Tool Registry Integration (Real Tool Execution) */}
+      <div
+        data-testid="studio-tool-registry-panel"
+        className="pt-3 border-t border-white/10 space-y-2.5"
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <Wrench className="w-3.5 h-3.5 text-[#00ffa3]" aria-hidden="true" />
+            <span>Tool Registry Execution ({boundRegistryTools.length} Bound Tools)</span>
+          </h3>
+          <span className="text-[11px] font-mono text-slate-400">
+            Sandbox + SHA-256 Audit
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {boundRegistryTools.map((tool) => {
+            const isBusy = runningToolName === tool.toolName;
+            return (
+              <button
+                key={tool.toolName}
+                type="button"
+                data-testid={`invoke-tool-${tool.toolName}`}
+                disabled={Boolean(runningToolName)}
+                onClick={() => handleInvokeTool(tool.toolName, tool.params)}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded bg-[#0b0e14] border border-white/10 hover:border-[#00ffa3]/50 text-left text-xs transition-colors disabled:opacity-60"
+              >
+                <span className="font-mono text-[#00ffa3] truncate">{tool.label}</span>
+                <span className="text-[11px] font-semibold text-slate-300 shrink-0">
+                  {isBusy ? "Running..." : "Invoke"}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {studioToolRuns.length > 0 && (
+          <div className="divide-y divide-white/10 border border-white/10 rounded-md bg-[#0b0e14]">
+            {studioToolRuns.map((run) => (
+              <div key={run.id} className="p-2.5 space-y-1 text-xs">
+                <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                  <span className="text-[#00ffa3] font-semibold">{run.toolName}</span>
+                  <span className="text-slate-400 tabular-nums">
+                    {run.executionTimeMs}ms · {run.status}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300">{run.result}</p>
+                <div className="text-[10px] font-mono text-sky-300 truncate">
+                  Artifact: {run.artifactProduced}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Emitted Artifacts */}
       <div className="pt-3 border-t border-white/10">

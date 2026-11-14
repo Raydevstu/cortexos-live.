@@ -8,6 +8,7 @@ export interface WsServerFrame<T = unknown> {
     | "workflow.updated"
     | "work_request.updated"
     | "council.updated"
+    | "tool.executed"
     | "pong";
   timestamp: string;
   payload: T;

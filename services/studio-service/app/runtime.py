@@ -24,6 +24,7 @@ from app.lifecycle import ArtifactLifecycleManager
 from app.loader import StudioLoader
 from app.registry import StudioRegistry
 from app.sandbox import StudioSandboxGuard
+from app.tools_registry import StudioToolRegistry
 from app.schemas import (
     ArtifactLifecycleRecord,
     ContextBuildRequest,
@@ -33,6 +34,7 @@ from app.schemas import (
     StudioSummarizeResponse,
     StudioValidateResponse,
 )
+from cortexos_types import ToolExecutionRecord, ToolExecutionRequest, ToolManifestSpec
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +50,14 @@ class StudioRuntime:
         context_builder: ContextStackBuilder | None = None,
         lifecycle_manager: ArtifactLifecycleManager | None = None,
         sandbox_guard: StudioSandboxGuard | None = None,
+        tool_registry: StudioToolRegistry | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self.registry = registry or StudioRegistry()
         self.context_builder = context_builder or ContextStackBuilder(self.settings)
         self.lifecycle_manager = lifecycle_manager or ArtifactLifecycleManager(self.settings)
         self.sandbox_guard = sandbox_guard or StudioSandboxGuard()
+        self.tool_registry = tool_registry or StudioToolRegistry()
         self.handoffs: list[StudioHandoffReceipt] = []
         self._bootstrapped = False
 
@@ -63,6 +67,7 @@ class StudioRuntime:
         loader = StudioLoader(self.settings.studios_dir)
         for profile, instance in loader.discover_all():
             self.registry.register(profile, instance)
+            self.tool_registry.register_manifest(profile.manifest)
         await self.registry.initialize_runnable_studios()
         self._bootstrapped = True
 
@@ -71,6 +76,17 @@ class StudioRuntime:
 
     def get_studio_profile(self, studio_id: str) -> LoadedStudioProfile | None:
         return self.registry.get_profile(studio_id)
+
+    def list_studio_tools(self, studio_id: str) -> list[ToolManifestSpec]:
+        if self.registry.get_profile(studio_id) is None:
+            raise KeyError(f"Studio '{studio_id}' not found.")
+        return self.tool_registry.list_tool_manifests(studio_id)
+
+    def execute_studio_tool(self, studio_id: str, req: ToolExecutionRequest) -> ToolExecutionRecord:
+        if self.registry.get_profile(studio_id) is None:
+            raise KeyError(f"Studio '{studio_id}' not found.")
+        req.studio_id = studio_id
+        return self.tool_registry.execute_tool(req)
 
     async def build_context(
         self,

@@ -175,3 +175,31 @@ def test_sandbox_guard_and_rbac_enforcement() -> None:
             json=bad_payload.model_dump(by_alias=True, mode="json"),
         )
         assert blocked.status_code == 422
+
+
+def test_studio_tool_registry_endpoints() -> None:
+    with TestClient(app) as client:
+        tools_resp = client.get("/api/v1/studios/design/tools")
+        assert tools_resp.status_code == 200
+        tools_data = tools_resp.json()
+        assert len(tools_data["tools"]) >= 8
+
+        exec_resp = client.post(
+            "/api/v1/studios/design/tools/execute",
+            json={
+                "toolName": "fs.artifact_export",
+                "agentId": "design",
+                "studioId": "design",
+                "projectId": "proj-cortex-os",
+                "parameters": {
+                    "title": "Python Studio Tool Export",
+                    "artifactType": "wireframe",
+                },
+            },
+        )
+        assert exec_resp.status_code == 200
+        exec_body = exec_resp.json()
+        assert exec_body["execution"]["status"] == "completed"
+        assert exec_body["auditEntry"]["allowed"] is True
+        assert len(exec_body["auditEntry"]["checksum"]) == 64
+

@@ -1,12 +1,14 @@
 """CortexOS canonical shared domain, API, event, workflow, provider, and security contracts."""
 
-from . import enums, models
+from . import enums, models, tool
 from .enums import *  # noqa: F403
 from .models import *  # noqa: F403
+from .tool import *  # noqa: F403
 
 __all__ = [
     "enums",
     "models",
+    "tool",
     *models.__all__,
     "AgentMemoryType",
     "AgentStatus",
@@ -35,6 +37,14 @@ __all__ = [
     "TemporalNamespace",
     "TemporalTaskQueue",
     "TerminalMode",
+    "ToolAccessMode",
+    "ToolAuditEntry",
+    "ToolCategory",
+    "ToolExecutionRecord",
+    "ToolExecutionRequest",
+    "ToolExecutionStatus",
+    "ToolManifestSpec",
+    "ToolPermissionResult",
     "UserStatus",
     "WorkRequestPriority",
     "WorkRequestStatus",
