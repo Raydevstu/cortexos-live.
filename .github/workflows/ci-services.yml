@@ -1,0 +1,12 @@
+name: CI Services
+on:
+  push:
+    paths: ['services/**', 'studios/**']
+  pull_request:
+    paths: ['services/**', 'studios/**']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "FastAPI & Temporal services verification placeholder (Sprint 1 scaffold)"

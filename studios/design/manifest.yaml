@@ -1,0 +1,5 @@
+id: design
+name: Design Studio
+version: 1.0.0
+role: Experience Architect
+supported_artifacts: ['wireframe', 'ui_design', 'design_system']

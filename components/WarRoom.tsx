@@ -560,8 +560,8 @@ export default function WarRoom({
         onPublishNodeToBrain({
           id: data.source.id,
           title: cleanTitle,
-          category: "Claude memory",
-          kind: "memory",
+          category: "Source",
+          kind: "note",
           area: "system",
           summary: `Ingested source (${newSourceKind}, trust=${newSourceTrust})`,
           notes: newSourceContent,
@@ -647,8 +647,8 @@ export default function WarRoom({
         onPublishNodeToBrain({
           id: persistedArt.id,
           title: persistedArt.title,
-          category: "Projects",
-          kind: "project",
+          category: "Artifact",
+          kind: "artifact",
           area: "system",
           summary: persistedArt.summary,
           notes: persistedArt.markdown_content || "",

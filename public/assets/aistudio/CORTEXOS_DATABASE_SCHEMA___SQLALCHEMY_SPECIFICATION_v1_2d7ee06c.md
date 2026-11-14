@@ -1,0 +1,990 @@
+CORTEXOS DATABASE SCHEMA & SQLALCHEMY SPECIFICATION v1
+PURPOSE
+
+This document defines the canonical database architecture for CortexOS.
+
+This document is the source of truth for:
+
+PostgreSQL Schema
+SQLAlchemy Models
+Alembic Migrations
+Pydantic Schemas
+FastAPI DTOs
+TypeScript Types
+Graph Synchronisation
+Search Indexing
+
+
+All future services must derive their models from this specification.
+
+DATABASE PRINCIPLES
+Rule 1
+
+Postgres is the System of Record.
+
+Source of Truth
+
+Projects
+Artifacts
+Decisions
+Knowledge
+Agents
+Workflows
+
+Rule 2
+
+Neo4j is Relationship Memory.
+
+Nodes
+Relationships
+Traversal
+Subgraphs
+
+Rule 3
+
+Qdrant is Semantic Memory.
+
+Embeddings
+Similarity
+Retrieval
+Context
+
+Rule 4
+
+Librarian owns intelligence updates.
+
+No service may directly update:
+
+Graph
+
+Search
+
+Knowledge
+
+
+without using Librarian.
+
+SQLALCHEMY FOUNDATION
+
+Every model inherits:
+
+class BaseMixin:
+
+    id: UUID
+
+    created_at: datetime
+
+    updated_at: datetime
+
+    deleted_at: datetime | None
+
+    created_by: UUID | None
+
+    updated_by: UUID | None
+
+CORE ENUMS
+ProjectStatus
+class ProjectStatus(str, Enum):
+
+    DRAFT = "draft"
+
+    ACTIVE = "active"
+
+    PAUSED = "paused"
+
+    BLOCKED = "blocked"
+
+    COMPLETED = "completed"
+
+    ARCHIVED = "archived"
+
+ProjectPhase
+class ProjectPhase(str, Enum):
+
+    DISCOVERY = "discovery"
+
+    PRODUCT = "product"
+
+    DESIGN = "design"
+
+    ARCHITECTURE = "architecture"
+
+    DEVELOPMENT = "development"
+
+    QA = "qa"
+
+    RELEASE = "release"
+
+    MAINTENANCE = "maintenance"
+
+ArtifactStatus
+class ArtifactStatus(str, Enum):
+
+    DRAFT = "draft"
+
+    REVIEW = "review"
+
+    APPROVED = "approved"
+
+    ARCHIVED = "archived"
+
+USERS
+users
+
+
+Purpose:
+
+Identity
+
+Permissions
+
+Ownership
+
+
+Columns:
+
+id
+
+email
+
+name
+
+avatar_url
+
+role
+
+status
+
+preferences
+
+created_at
+
+updated_at
+
+ORGANIZATIONS
+organizations
+
+
+Purpose:
+
+Multi-tenancy
+
+
+Columns:
+
+id
+
+name
+
+slug
+
+plan
+
+settings
+
+PROJECTS
+projects
+
+
+Purpose:
+
+Top-level container
+
+
+Columns:
+
+id
+
+organization_id
+
+name
+
+description
+
+status
+
+phase
+
+owner_id
+
+vision
+
+metadata
+
+created_at
+
+updated_at
+
+
+Relationships:
+
+Project
+
+ ├── Artifacts
+ ├── Decisions
+ ├── Tasks
+ ├── Workflows
+ └── Agents
+
+ARTIFACTS
+
+Most important table.
+
+artifacts
+
+
+Purpose:
+
+All outputs
+
+
+Columns:
+
+id
+
+project_id
+
+artifact_type
+
+title
+
+summary
+
+version
+
+status
+
+content_uri
+
+checksum
+
+metadata
+
+created_at
+
+updated_at
+
+Artifact Types
+research
+
+persona
+
+prd
+
+roadmap
+
+requirement
+
+wireframe
+
+design_system
+
+architecture
+
+openapi
+
+database_schema
+
+infrastructure
+
+source_code
+
+integration
+
+test_plan
+
+security_report
+
+deployment
+
+release_notes
+
+pattern
+
+doctrine
+
+ARTIFACT VERSIONS
+artifact_versions
+
+
+Purpose:
+
+Version history
+
+
+Columns:
+
+id
+
+artifact_id
+
+version
+
+content_uri
+
+change_summary
+
+created_at
+
+DECISIONS
+decisions
+
+
+Purpose:
+
+Architectural memory
+
+
+Columns:
+
+id
+
+project_id
+
+title
+
+context
+
+decision
+
+reasoning
+
+impact
+
+status
+
+ENTITIES
+entities
+
+
+Purpose:
+
+Knowledge entities
+
+
+Examples:
+
+OpenAI
+
+FastAPI
+
+Neo4j
+
+Stripe
+
+Azure
+
+
+Columns:
+
+id
+
+name
+
+entity_type
+
+description
+
+aliases
+
+metadata
+
+CONCEPTS
+concepts
+
+
+Purpose:
+
+Knowledge concepts
+
+
+Examples:
+
+CQRS
+
+RAG
+
+Knowledge Graph
+
+Microservices
+
+
+Columns:
+
+id
+
+name
+
+description
+
+domain
+
+keywords
+
+PATTERNS
+patterns
+
+
+Examples:
+
+Repository Pattern
+
+Event Driven Pattern
+
+Agent Pattern
+
+
+Columns:
+
+id
+
+name
+
+category
+
+description
+
+reuse_score
+
+DOCTRINES
+doctrines
+
+
+Purpose:
+
+Institutional knowledge
+
+
+Examples:
+
+API Design Doctrine
+
+Architecture Doctrine
+
+Security Doctrine
+
+
+Columns:
+
+id
+
+name
+
+description
+
+source_pattern_id
+
+SOURCES
+sources
+
+
+Purpose:
+
+Raw ingestion layer
+
+
+Columns:
+
+id
+
+source_type
+
+title
+
+source_uri
+
+raw_content
+
+checksum
+
+metadata
+
+
+Source Types:
+
+pdf
+
+url
+
+repo
+
+meeting
+
+chat
+
+video
+
+document
+
+KNOWLEDGE ARTICLES
+knowledge_articles
+
+
+Purpose:
+
+Wiki layer
+
+
+Columns:
+
+id
+
+title
+
+article_type
+
+content
+
+summary
+
+generated_by
+
+metadata
+
+WORKFLOWS
+workflows
+
+
+Purpose:
+
+Temporal workflow tracking
+
+
+Columns:
+
+id
+
+project_id
+
+workflow_type
+
+status
+
+current_step
+
+started_at
+
+completed_at
+
+WORKFLOW EXECUTIONS
+workflow_executions
+
+
+Purpose:
+
+Execution history
+
+
+Columns:
+
+id
+
+workflow_id
+
+execution_id
+
+status
+
+started_at
+
+completed_at
+
+AGENTS
+agents
+
+
+Purpose:
+
+Agent identity
+
+
+Columns:
+
+id
+
+studio_id
+
+name
+
+role
+
+status
+
+health_score
+
+current_task
+
+model_id
+
+AGENT MEMORY
+agent_memory
+
+
+Purpose:
+
+Local memory
+
+
+Columns:
+
+id
+
+agent_id
+
+memory_type
+
+content
+
+importance_score
+
+STUDIOS
+studios
+
+
+Purpose:
+
+Studio registry
+
+
+Columns:
+
+id
+
+name
+
+mission
+
+status
+
+manifest
+
+WORK REQUESTS
+
+Generated by Jarvis.
+
+work_requests
+
+
+Columns:
+
+id
+
+project_id
+
+studio_id
+
+objective
+
+constraints
+
+priority
+
+status
+
+WORK RESPONSES
+work_responses
+
+
+Columns:
+
+id
+
+work_request_id
+
+status
+
+summary
+
+artifact_ids
+
+next_phase
+
+AUDIT LOGS
+audit_logs
+
+
+Purpose:
+
+System traceability
+
+
+Columns:
+
+id
+
+entity_type
+
+entity_id
+
+action
+
+changed_by
+
+created_at
+
+EVENTS
+events
+
+
+Purpose:
+
+Event sourcing
+
+
+Columns:
+
+id
+
+event_type
+
+payload
+
+status
+
+timestamp
+
+RELATIONSHIP MIRROR
+
+Postgres mirror of graph.
+
+relationships
+
+
+Columns:
+
+id
+
+source_id
+
+target_id
+
+relationship_type
+
+
+Relationship Types:
+
+CONTAINS
+
+USES
+
+REFERENCES
+
+IMPLEMENTS
+
+DEPENDS_ON
+
+PART_OF
+
+CREATED_BY
+
+INFLUENCES
+
+SEARCH INDEX TABLE
+search_documents
+
+
+Purpose:
+
+Hybrid search cache
+
+
+Columns:
+
+id
+
+source_type
+
+source_id
+
+content
+
+embedding_id
+
+indexed_at
+
+REPOSITORY PATTERN
+
+Every model must have:
+
+Repository
+
+
+Structure:
+
+create()
+
+update()
+
+delete()
+
+get_by_id()
+
+list()
+
+search()
+
+SERVICE PATTERN
+
+Every service must have:
+
+CRUD
+
+Validation
+
+Events
+
+Audit
+
+Permissions
+
+INDEXING STRATEGY
+
+Required indexes:
+
+Project Status
+
+Project Phase
+
+Artifact Type
+
+Artifact Status
+
+Agent Status
+
+Workflow Status
+
+Created Date
+
+SOFT DELETE STRATEGY
+
+Never hard delete.
+
+Every object includes:
+
+deleted_at
+
+MULTI-TENANCY
+
+Every business object must support:
+
+organization_id
+
+
+except:
+
+system tables
+
+MIGRATION STRATEGY
+
+Use:
+
+Alembic
+
+
+Migration Sequence:
+
+Users
+
+Organizations
+
+Projects
+
+Artifacts
+
+Knowledge
+
+Workflows
+
+Agents
+
+Events
+
+Audit
+
+SQLALCHEMY PACKAGE STRUCTURE
+models/
+
+base.py
+
+user.py
+
+organization.py
+
+project.py
+
+artifact.py
+
+decision.py
+
+entity.py
+
+concept.py
+
+pattern.py
+
+doctrine.py
+
+workflow.py
+
+agent.py
+
+studio.py
+
+event.py
+
+audit.py
+
+FINAL DIRECTIVE
+
+This schema is the canonical implementation source for CortexOS.
+
+Everything else derives from it:
+
+Pydantic Models
+
+FastAPI Contracts
+
+OpenAPI Specification
+
+Temporal Workflows
+
+Graph Nodes
+
+Search Documents
+
+TypeScript Types
+
+SDK Contracts
+
+
+No model may be introduced outside this schema without updating this specification first.
+
+NEXT DOCUMENT
+
+Create next:
+
+CORTEXOS TEMPORAL WORKFLOW SPECIFICATION v1
+
+
+This will define:
+
+Project Lifecycle Workflow
+
+Librarian Workflow
+
+Agent Workflow
+
+Studio Workflow
+
+War Room Workflow
+
+Provider Routing Workflow
+
+Artifact Workflow
+
+Review Workflow
+
+Approval Workflow
+
+
+and becomes the execution engine blueprint for CortexOS.

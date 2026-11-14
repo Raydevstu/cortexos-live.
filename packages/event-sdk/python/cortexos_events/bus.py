@@ -1,0 +1,1 @@
+"""Abstract EventBus protocol stub."""

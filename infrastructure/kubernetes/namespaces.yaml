@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cortexos-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cortexos-intelligence
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cortexos-studios
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cortexos-providers

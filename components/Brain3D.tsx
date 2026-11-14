@@ -45,7 +45,13 @@ interface Brain3DProps {
   onSearchChange: (query: string) => void;
   customNodes?: BrainNode[];
   projectId?: string;
+  onGraphNodesLoaded?: (nodes: BrainNode[]) => void;
 }
+
+type ReturnedEdge = { from: string; to: string; edge_type?: string };
+
+const _camLerpVec = new THREE.Vector3();
+const _projVec = new THREE.Vector3();
 
 export default function Brain3D({
   onSelectNode,
@@ -54,35 +60,56 @@ export default function Brain3D({
   onSearchChange,
   customNodes = [],
   projectId = "proj-solar-crm",
+  onGraphNodesLoaded,
 }: Brain3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const labelRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const onGraphNodesLoadedRef = useRef(onGraphNodesLoaded);
+  useEffect(() => {
+    onGraphNodesLoadedRef.current = onGraphNodesLoaded;
+  }, [onGraphNodesLoaded]);
+
   const [dbGraph, setDbGraph] = useState<{
     nodes: BrainNode[];
     connections: [string, string][];
-  }>(() => computeBrainNodeLayouts([]));
+    returnedEdges: ReturnedEdge[];
+  }>(() => ({ ...computeBrainNodeLayouts([]), returnedEdges: [] }));
 
   useEffect(() => {
     let active = true;
     const projectTarget = projectId || "proj-solar-crm";
-    fetch(`/api/graph/project/${encodeURIComponent(projectTarget)}?depth=2`)
+    fetch(`/api/graph/project/${encodeURIComponent(projectTarget)}?depth=2`, {
+      cache: "no-store",
+    })
       .then((res) => {
         if (!res.ok) {
-          return fetch("/api/graph/all?depth=2").then((r) => r.json());
+          return fetch("/api/graph/all?depth=2", { cache: "no-store" }).then((r) => r.json());
         }
         return res.json();
       })
       .then((data) => {
         if (!active || !Array.isArray(data.nodes)) return;
-        const edges: [string, string][] =
-          Array.isArray(data.edges) && data.edges.length > 0
-            ? data.edges
-            : Array.isArray(data.relationships)
-            ? data.relationships.map(
-                (r: { from_id: string; to_id: string }) =>
-                  [r.from_id, r.to_id] as [string, string]
+        const returnedEdges: ReturnedEdge[] = Array.isArray(data.edges)
+          ? data.edges
+              .map((e: { from?: string; to?: string; edge_type?: string } | [string, string]) =>
+                Array.isArray(e)
+                  ? { from: String(e[0] || ""), to: String(e[1] || ""), edge_type: "related" }
+                  : { from: String(e.from || ""), to: String(e.to || ""), edge_type: e.edge_type }
               )
-            : [];
-        setDbGraph(computeBrainNodeLayouts(data.nodes, edges));
+              .filter((e: ReturnedEdge) => Boolean(e.from && e.to))
+          : Array.isArray(data.relationships)
+          ? data.relationships.map(
+              (r: { from_id: string; to_id: string; edge_type?: string }) => ({
+                from: r.from_id,
+                to: r.to_id,
+                edge_type: r.edge_type,
+              })
+            )
+          : [];
+        const edgePairs: [string, string][] = returnedEdges.map((e) => [e.from, e.to]);
+        const layout = computeBrainNodeLayouts(data.nodes, edgePairs);
+        setDbGraph({ ...layout, returnedEdges });
+        onGraphNodesLoadedRef.current?.(layout.nodes);
       })
       .catch(() => {
         // Keep current graph cache on transient network error
@@ -97,16 +124,21 @@ export default function Brain3D({
     const existingIds = new Set(dbGraph.nodes.map((n) => n.id));
     const newNodes = customNodes.filter((n) => !existingIds.has(n.id));
     if (newNodes.length === 0) return dbGraph;
-    const extraConns: [string, string][] = [];
+    const extraEdges: ReturnedEdge[] = [];
     newNodes.forEach((n) => {
       n.connections.forEach((tgt) => {
-        extraConns.push([n.id, tgt]);
+        extraEdges.push({ from: n.id, to: tgt, edge_type: "references" });
       });
     });
-    return computeBrainNodeLayouts(
+    const extraConns: [string, string][] = extraEdges.map((e) => [e.from, e.to]);
+    const layout = computeBrainNodeLayouts(
       [...newNodes, ...dbGraph.nodes],
       [...extraConns, ...dbGraph.connections]
     );
+    return {
+      ...layout,
+      returnedEdges: [...extraEdges, ...dbGraph.returnedEdges],
+    };
   }, [dbGraph, customNodes]);
 
   // Layout & Theme State
@@ -124,14 +156,12 @@ export default function Brain3D({
   // Filter States
   const [selectedArea, setSelectedArea] = useState<NodeArea | "all">("all");
   const [selectedKind, setSelectedKind] = useState<NodeKind | "all">("all");
-  const [activeSources, setActiveSources] = useState<Record<SourceCategory, boolean>>({
-    "Business wiki": true,
-    Meetings: true,
-    "Video knowledge": true,
-    "Claude memory": true,
-    "Codex memory": true,
-    Projects: true,
-    "Skills & agents": true,
+  const [activeSources, setActiveSources] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    SOURCES.forEach((s) => {
+      init[s.name] = true;
+    });
+    return init;
   });
 
   const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
@@ -197,7 +227,7 @@ export default function Brain3D({
   const filteredNodes = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return graphData.nodes.filter((node) => {
-      const isSourceActive = activeSources[node.category];
+      const isSourceActive = activeSources[node.category] ?? true;
       const matchesSearch =
         !query ||
         node.title.toLowerCase().includes(query) ||
@@ -213,10 +243,19 @@ export default function Brain3D({
 
   const statsNoteCount = filteredNodes.length;
 
+  const labeledAnchorNodes = useMemo(() => {
+    if (labelMode === "none") return [];
+    if (labelMode === "all") return filteredNodes.slice(0, 40);
+    // Prioritize project nodes first, then studio anchors
+    const projects = filteredNodes.filter((n) => n.kind === "project");
+    const studios = filteredNodes.filter((n) => n.kind === "studio");
+    return [...projects, ...studios];
+  }, [labelMode, filteredNodes]);
+
   const toggleSource = (name: SourceCategory) => {
     setActiveSources((prev) => ({
       ...prev,
-      [name]: !prev[name],
+      [name]: !(prev[name] ?? true),
     }));
   };
 
@@ -468,20 +507,20 @@ export default function Brain3D({
         if (!sphereCache[rounded]) sphereCache[rounded] = new THREE.SphereGeometry(rad, 12, 12);
         return sphereCache[rounded];
       }
-      if (kind === "skill") {
+      if (kind === "project" || kind === "studio") {
+        if (!boxCache[rounded]) boxCache[rounded] = new THREE.BoxGeometry(rad * 1.65, rad * 1.65, rad * 1.65);
+        return boxCache[rounded];
+      }
+      if (kind === "artifact" || kind === "agent" || kind === "skill" || kind === "entity") {
         if (!octaCache[rounded]) octaCache[rounded] = new THREE.OctahedronGeometry(rad * 1.15, 0);
         return octaCache[rounded];
-      }
-      if (kind === "project") {
-        if (!boxCache[rounded]) boxCache[rounded] = new THREE.BoxGeometry(rad * 1.5, rad * 1.5, rad * 1.5);
-        return boxCache[rounded];
       }
       if (kind === "routine") {
         if (!torusCache[rounded]) torusCache[rounded] = new THREE.TorusGeometry(rad * 1.1, rad * 0.4, 8, 16);
         return torusCache[rounded];
       }
-      if (kind === "app") {
-        if (!cylCache[rounded]) cylCache[rounded] = new THREE.CylinderGeometry(rad * 0.9, rad * 0.9, rad * 1.4, 6);
+      if (kind === "concept" || kind === "app") {
+        if (!cylCache[rounded]) cylCache[rounded] = new THREE.CylinderGeometry(rad * 0.85, rad * 0.85, rad * 1.35, 6);
         return cylCache[rounded];
       }
       if (!sphereCache[rounded]) sphereCache[rounded] = new THREE.SphereGeometry(rad, 12, 12);
@@ -495,9 +534,8 @@ export default function Brain3D({
       sourceColorMap[s.name] = new THREE.Color(s.color);
     });
 
-    const nodesToRender = isSoftwareGl
-      ? graphData.nodes.filter((n, idx) => n.isKeyAnchor || idx % 5 === 0)
-      : graphData.nodes;
+    // Always render every node in the Postgres brain on both GPU and software WebGL
+    const nodesToRender = graphData.nodes;
 
     nodesToRender.forEach((node) => {
       let color = sourceColorMap[node.category] || new THREE.Color(0x38bdf8);
@@ -512,12 +550,19 @@ export default function Brain3D({
       const mat = new THREE.MeshStandardMaterial({
         color,
         emissive: color,
-        emissiveIntensity: node.isKeyAnchor ? 0.75 : 0.4,
+        emissiveIntensity: node.kind === "project" ? 0.9 : node.isKeyAnchor ? 0.75 : 0.4,
         roughness: 0.25,
         metalness: 0.2,
       });
 
-      const meshRadius = node.isKeyAnchor ? 4.8 : Math.max(1.8, node.radius * 0.8);
+      const meshRadius =
+        node.kind === "project"
+          ? 6.6
+          : node.kind === "studio"
+          ? 5.0
+          : node.isKeyAnchor
+          ? 4.8
+          : Math.max(2.0, node.radius * 0.7);
       const geo = getGeo(node.kind, meshRadius);
       const mesh = new THREE.Mesh(geo, mat);
 
@@ -533,15 +578,16 @@ export default function Brain3D({
     nodeMeshesRef.current = nodeMeshes;
     nodeMeshMapRef.current = nodeMeshMap;
 
-    // 9. Connection Lines
-    const lineLimit = isSoftwareGl ? 200 : 750;
-    const sampleConnections = graphData.connections.slice(0, lineLimit);
-    sampleConnectionsRef.current = sampleConnections;
+    // 9. Connection Lines — draw a visible line for EVERY returned edge whose endpoints exist
+    const validEdges = graphData.connections.filter(
+      ([srcId, tgtId]) => nodeMeshMap.has(srcId) && nodeMeshMap.has(tgtId)
+    );
+    sampleConnectionsRef.current = validEdges;
 
     const linePoints: number[] = [];
     const lineColors: number[] = [];
 
-    sampleConnections.forEach(([srcId, tgtId]) => {
+    validEdges.forEach(([srcId, tgtId]) => {
       const srcNode = nodeMeshMap.get(srcId)?.userData.nodeData as BrainNode | undefined;
       const tgtNode = nodeMeshMap.get(tgtId)?.userData.nodeData as BrainNode | undefined;
       if (srcNode && tgtNode) {
@@ -550,8 +596,8 @@ export default function Brain3D({
 
         const c1 = sourceColorMap[srcNode.category] || new THREE.Color(0x38bdf8);
         const c2 = sourceColorMap[tgtNode.category] || new THREE.Color(0xa855f7);
-        lineColors.push(c1.r * 0.4, c1.g * 0.4, c1.b * 0.4);
-        lineColors.push(c2.r * 0.4, c2.g * 0.4, c2.b * 0.4);
+        lineColors.push(c1.r * 0.85, c1.g * 0.85, c1.b * 0.85);
+        lineColors.push(c2.r * 0.85, c2.g * 0.85, c2.b * 0.85);
       }
     });
 
@@ -562,11 +608,12 @@ export default function Brain3D({
     const linesMat = new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: themeConfig.lineOpacity,
+      opacity: Math.max(0.48, themeConfig.lineOpacity),
       blending: THREE.AdditiveBlending,
     });
 
     const linesMesh = new THREE.LineSegments(linesGeo, linesMat);
+    linesMesh.frustumCulled = false;
     scene.add(linesMesh);
     linesMeshRef.current = linesMesh;
 
@@ -724,7 +771,7 @@ export default function Brain3D({
       });
 
       // Update connection line positions to follow moving nodes
-      if (linesMesh && linesMesh.visible) {
+      if (linesMesh && linesMesh.visible && sampleConnectionsRef.current.length > 0) {
         const posAttr = linesMesh.geometry.attributes.position as THREE.Float32BufferAttribute;
         const posArr = posAttr.array as Float32Array;
         let ptr = 0;
@@ -733,13 +780,20 @@ export default function Brain3D({
           const [srcId, tgtId] = sampled[i];
           const srcMesh = nodeMeshMap.get(srcId);
           const tgtMesh = nodeMeshMap.get(tgtId);
-          if (srcMesh && tgtMesh) {
+          if (srcMesh && tgtMesh && srcMesh.visible && tgtMesh.visible) {
             posArr[ptr++] = srcMesh.position.x;
             posArr[ptr++] = srcMesh.position.y;
             posArr[ptr++] = srcMesh.position.z;
             posArr[ptr++] = tgtMesh.position.x;
             posArr[ptr++] = tgtMesh.position.y;
             posArr[ptr++] = tgtMesh.position.z;
+          } else {
+            posArr[ptr++] = 0;
+            posArr[ptr++] = 0;
+            posArr[ptr++] = 0;
+            posArr[ptr++] = 0;
+            posArr[ptr++] = 0;
+            posArr[ptr++] = 0;
           }
         }
         posAttr.needsUpdate = true;
@@ -773,7 +827,8 @@ export default function Brain3D({
       const targetZ =
         cameraTargetRef.current.z + dist * Math.sin(phi) * Math.cos(theta);
 
-      camera.position.lerp(new THREE.Vector3(targetX, targetY, targetZ), 0.1);
+      _camLerpVec.set(targetX, targetY, targetZ);
+      camera.position.lerp(_camLerpVec, 0.1);
       camera.lookAt(cameraTargetRef.current);
 
       if (starField) {
@@ -781,6 +836,30 @@ export default function Brain3D({
       }
 
       renderer.render(scene, camera);
+
+      // Project 3D anchor coordinates onto 2D DOM label overlays
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      labelRefs.current.forEach((el, nodeId) => {
+        const mesh = nodeMeshMap.get(nodeId);
+        if (!mesh || !mesh.visible) {
+          el.style.opacity = "0";
+          el.style.pointerEvents = "none";
+          return;
+        }
+        _projVec.copy(mesh.position).project(camera);
+        if (_projVec.z >= 1 || _projVec.z <= -1) {
+          el.style.opacity = "0";
+          el.style.pointerEvents = "none";
+          return;
+        }
+        const px = (_projVec.x * 0.5 + 0.5) * cw;
+        const py = (-_projVec.y * 0.5 + 0.5) * ch;
+        el.style.opacity = "1";
+        el.style.pointerEvents = "auto";
+        el.style.transform = `translate3d(${px.toFixed(1)}px, ${(py - 14).toFixed(1)}px, 0) translate(-50%, -100%)`;
+      });
+
       scheduleNextFrame();
     };
 
@@ -819,7 +898,7 @@ export default function Brain3D({
     });
 
     nodeMeshesRef.current.forEach(({ mesh, node }) => {
-      const isSourceActive = activeSources[node.category];
+      const isSourceActive = activeSources[node.category] ?? true;
       const matchesSearch =
         !query ||
         node.title.toLowerCase().includes(query) ||
@@ -1172,7 +1251,7 @@ export default function Brain3D({
           {/* Kind Chips */}
           <div className="flex items-center gap-1 overflow-x-auto max-w-sm py-0.5 scrollbar-none">
             <span className="text-[9px] font-mono text-slate-400 uppercase shrink-0 mr-1">Kind:</span>
-            {(["all", "skill", "project", "note", "memory", "routine", "app", "run"] as (NodeKind | "all")[]).map((k) => (
+            {(["all", "project", "note", "artifact", "entity", "concept", "studio", "agent"] as (NodeKind | "all")[]).map((k) => (
               <button
                 key={k}
                 onClick={() => setSelectedKind(k)}
@@ -1244,26 +1323,29 @@ export default function Brain3D({
         </div>
       </div>
 
-      {/* Floating 2D Anchor Labels (when enabled) */}
+      {/* Floating 2D Anchor Labels (3D-projected onto labeled anchor cubes) */}
       {labelMode !== "none" && !isCinemaMode && (
-        <div className="pointer-events-none absolute inset-0 z-10">
-          {graphData.nodes.slice(0, 5).map((anchor, idx) => {
-            const positions = [
-              { top: "22%", left: "45%" },
-              { top: "35%", left: "62%" },
-              { bottom: "35%", right: "22%" },
-              { bottom: "22%", left: "52%" },
-              { bottom: "42%", left: "30%" },
-            ];
-            const pos = positions[idx] || positions[0];
+        <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+          {labeledAnchorNodes.map((anchor) => {
+            const isProject = anchor.kind === "project";
             return (
-              <div
+              <button
                 key={anchor.id}
-                className="absolute transform -translate-x-1/2 -translate-y-1/2 px-2.5 py-1 rounded-md bg-slate-950/85 border border-cyan-500/50 text-[11px] font-mono text-cyan-200 backdrop-blur-md shadow-lg"
-                style={pos}
+                type="button"
+                ref={(el) => {
+                  if (el) labelRefs.current.set(anchor.id, el);
+                  else labelRefs.current.delete(anchor.id);
+                }}
+                onClick={() => onSelectNode(anchor)}
+                className={`pointer-events-auto cursor-pointer absolute top-0 left-0 px-2.5 py-1 rounded-md bg-slate-950/90 text-[11px] font-mono shadow-lg transition-colors whitespace-nowrap ${
+                  isProject
+                    ? "border border-emerald-400/80 text-emerald-200 font-bold hover:border-emerald-300 hover:text-white"
+                    : "border border-cyan-500/50 text-cyan-200 hover:border-cyan-300 hover:text-white"
+                }`}
+                style={{ opacity: 0 }}
               >
-                {anchor.title}
-              </div>
+                {isProject ? `■ ${anchor.title}` : anchor.title}
+              </button>
             );
           })}
 
@@ -1352,14 +1434,14 @@ export default function Brain3D({
           </div>
           <div>
             <div className="text-emerald-400 font-bold">
-              {graphData.connections.length}
+              {graphData.returnedEdges.length}
             </div>
             <div className="text-slate-400 text-[8px] uppercase">Edges</div>
           </div>
           <div>
             <div className="text-purple-400 font-bold">
               {(
-                graphData.connections.length /
+                graphData.returnedEdges.length /
                 Math.max(1, graphData.nodes.length)
               ).toFixed(2)}
             </div>

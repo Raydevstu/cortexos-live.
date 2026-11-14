@@ -1,0 +1,12 @@
+name: CI Packages
+on:
+  push:
+    paths: ['packages/**']
+  pull_request:
+    paths: ['packages/**']
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Package SDK contract checks placeholder (Sprint 1 scaffold)"

@@ -1,0 +1,5 @@
+id: release
+name: Release Studio
+version: 1.0.0
+role: Deployment Specialist
+supported_artifacts: ['release_plan', 'deployment', 'release_notes']

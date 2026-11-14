@@ -1,0 +1,1 @@
+"""MainBrain retrieval contract stub."""

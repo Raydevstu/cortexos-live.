@@ -1,0 +1,5 @@
+id: product
+name: Product Studio
+version: 1.0.0
+role: Requirements Specialist
+supported_artifacts: ['prd', 'roadmap', 'requirement']

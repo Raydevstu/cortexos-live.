@@ -1,0 +1,1 @@
+"""ProviderAdapter stub for openrouter."""

@@ -370,9 +370,17 @@ test("7. GET /api/search executes hybrid search querying embeddings + sources + 
   assert.ok(Array.isArray(topResult.citations), "Result must contain citations array");
 });
 
-test("8. GET /api/graph/project/[id] returns real Postgres nodes and relationships", async () => {
+test("8. GET /api/graph/project/[id] returns complete Postgres brain_objects and active relationships in same UUID space", async () => {
   const { NextRequest } = await import("next/server.js");
   const { GET: getProjectGraph } = await import("../../app/api/graph/project/[id]/route.ts");
+  const { query } = await import("./client.ts");
+
+  const boCountRes = await query<{ count: string }>("SELECT count(*)::text AS count FROM brain_objects");
+  const relCountRes = await query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM relationships WHERE superseded_at IS NULL AND review_state <> 'rejected'"
+  );
+  const expectedNodesCount = parseInt(boCountRes.rows[0].count, 10);
+  const expectedEdgesCount = parseInt(relCountRes.rows[0].count, 10);
 
   const req = new NextRequest("http://localhost:3000/api/graph/project/proj-solar-crm");
   const res = await getProjectGraph(req, {
@@ -381,46 +389,74 @@ test("8. GET /api/graph/project/[id] returns real Postgres nodes and relationshi
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.ok(Array.isArray(data.nodes), "Project graph must return nodes array");
-  assert.ok(data.nodes.length > 0, "Expected nodes in project graph");
+  assert.equal(data.nodes.length, expectedNodesCount, "Must return every brain_objects row");
   assert.ok(Array.isArray(data.relationships), "Project graph must return relationships array");
   assert.ok(Array.isArray(data.edges), "Project graph must return edges array");
+  assert.equal(data.edges.length, expectedEdgesCount, "Must return every active relationship");
+
+  const nodeIds = new Set(data.nodes.map((n: { id: string }) => n.id));
+  for (const edge of data.edges as Array<{ from: string; to: string; edge_type: string }>) {
+    assert.ok(edge.from && edge.to && edge.edge_type, "Each edge must have from, to, edge_type");
+    assert.ok(nodeIds.has(edge.from), `Edge from_id ${edge.from} must join to nodes`);
+    assert.ok(nodeIds.has(edge.to), `Edge to_id ${edge.to} must join to nodes`);
+  }
+
+  const projectNodes = data.nodes.filter((n: { kind: string }) => n.kind === "project");
+  assert.ok(
+    projectNodes.some((n: { title: string }) => n.title.includes("CortexOS v1")),
+    "Must include CortexOS v1 project node"
+  );
+  assert.ok(
+    projectNodes.some((n: { title: string }) => n.title.includes("Helios")),
+    "Must include Helios Solar CRM project node"
+  );
 });
 
 test("9. POST /api/projects auto-resolves duplicate slug collisions cleanly", async () => {
   const { NextRequest } = await import("next/server.js");
   const { POST: postProject } = await import("../../app/api/projects/route.ts");
+  const { query } = await import("./client.ts");
   const ownerKey = process.env.OWNER_KEY || "cortex-owner-key-v1";
   const uniqueName = `Collision Test ${Date.now()}`;
   const expectedBaseSlug = uniqueName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
-  // Create first project with unique name
-  const req1 = new NextRequest("http://localhost:3000/api/projects", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-owner-key": ownerKey,
-    },
-    body: JSON.stringify({ name: uniqueName }),
-  });
-  const res1 = await postProject(req1);
-  assert.equal(res1.status, 201);
-  const data1 = await res1.json();
-  assert.equal(data1.slug, expectedBaseSlug);
+  const createdIds: string[] = [];
+  try {
+    // Create first project with unique name
+    const req1 = new NextRequest("http://localhost:3000/api/projects", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-owner-key": ownerKey,
+      },
+      body: JSON.stringify({ name: uniqueName }),
+    });
+    const res1 = await postProject(req1);
+    assert.equal(res1.status, 201);
+    const data1 = await res1.json();
+    createdIds.push(data1.id);
+    assert.equal(data1.slug, expectedBaseSlug);
 
-  // Create second project with the exact same name -> must auto-resolve to baseSlug-2 without 500
-  const req2 = new NextRequest("http://localhost:3000/api/projects", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-owner-key": ownerKey,
-    },
-    body: JSON.stringify({ name: uniqueName }),
-  });
-  const res2 = await postProject(req2);
-  assert.equal(res2.status, 201);
-  const data2 = await res2.json();
-  assert.equal(data2.slug, `${expectedBaseSlug}-2`);
-  assert.notEqual(data1.id, data2.id);
+    // Create second project with the exact same name -> must auto-resolve to baseSlug-2 without 500
+    const req2 = new NextRequest("http://localhost:3000/api/projects", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-owner-key": ownerKey,
+      },
+      body: JSON.stringify({ name: uniqueName }),
+    });
+    const res2 = await postProject(req2);
+    assert.equal(res2.status, 201);
+    const data2 = await res2.json();
+    createdIds.push(data2.id);
+    assert.equal(data2.slug, `${expectedBaseSlug}-2`);
+    assert.notEqual(data1.id, data2.id);
+  } finally {
+    for (const id of createdIds) {
+      await query("DELETE FROM brain_objects WHERE id = $1::uuid", [id]);
+    }
+  }
 });
 
 test.after(async () => {

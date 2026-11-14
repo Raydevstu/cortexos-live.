@@ -32,43 +32,43 @@ export default function NodeInspector({
   const [copied, setCopied] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isReviewed, setIsReviewed] = useState(false);
-  const [graphNeighbors, setGraphNeighbors] = useState<
-    Array<{
+  const [neighborState, setNeighborState] = useState<{
+    nodeId: string;
+    neighbors: Array<{
       object_id: string;
       depth: number;
       object_type: string;
       title: string;
-    }>
-  >([]);
-  const [isLoadingNeighbors, setIsLoadingNeighbors] = useState(false);
+    }>;
+  } | null>(null);
+
+  const activeNodeId = node?.id || null;
 
   React.useEffect(() => {
-    if (!node?.id) {
-      setGraphNeighbors([]);
-      return;
-    }
+    if (!activeNodeId) return;
     let active = true;
-    setIsLoadingNeighbors(true);
-    fetch(`/api/graph/${encodeURIComponent(node.id)}?depth=2`)
+    fetch(`/api/graph/${encodeURIComponent(activeNodeId)}?depth=2`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!active) return;
-        if (data && Array.isArray(data.neighbors)) {
-          setGraphNeighbors(data.neighbors);
-        } else {
-          setGraphNeighbors([]);
-        }
+        setNeighborState({
+          nodeId: activeNodeId,
+          neighbors: data && Array.isArray(data.neighbors) ? data.neighbors : [],
+        });
       })
       .catch(() => {
-        if (active) setGraphNeighbors([]);
-      })
-      .finally(() => {
-        if (active) setIsLoadingNeighbors(false);
+        if (active) {
+          setNeighborState({ nodeId: activeNodeId, neighbors: [] });
+        }
       });
     return () => {
       active = false;
     };
-  }, [node?.id]);
+  }, [activeNodeId]);
+
+  const isLoadingNeighbors = Boolean(activeNodeId && neighborState?.nodeId !== activeNodeId);
+  const graphNeighbors =
+    activeNodeId && neighborState?.nodeId === activeNodeId ? neighborState.neighbors : [];
 
   if (!node) return null;
 
@@ -228,9 +228,9 @@ export default function NodeInspector({
             System Tags
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {node.tags.map((tag) => (
+            {node.tags.map((tag, idx) => (
               <span
-                key={tag}
+                key={`${tag}-${idx}`}
                 className="px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300"
               >
                 #{tag}

@@ -1,0 +1,1 @@
+"""Policy auth dependency stub."""

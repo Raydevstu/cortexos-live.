@@ -1,0 +1,1 @@
+"""Studio tool registry stub."""

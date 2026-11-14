@@ -1,0 +1,5 @@
+id: discovery
+name: Discovery Studio
+version: 1.0.0
+role: Research Specialist
+supported_artifacts: ['research', 'persona']

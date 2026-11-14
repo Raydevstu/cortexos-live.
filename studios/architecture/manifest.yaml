@@ -1,0 +1,5 @@
+id: architecture
+name: Architecture Studio
+version: 1.0.0
+role: Systems Architect
+supported_artifacts: ['architecture', 'openapi', 'database_schema', 'infrastructure']

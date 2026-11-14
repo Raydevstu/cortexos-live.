@@ -1,0 +1,5 @@
+id: qa
+name: QA Studio
+version: 1.0.0
+role: Quality Assurance Specialist
+supported_artifacts: ['test_plan', 'security_report']

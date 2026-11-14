@@ -1,0 +1,1 @@
+"""Provider failover chain stub."""

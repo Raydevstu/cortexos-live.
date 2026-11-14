@@ -1,0 +1,4 @@
+[project]
+name = "cortexos-jarvis-service"
+version = "0.1.0"
+requires-python = ">=3.12"

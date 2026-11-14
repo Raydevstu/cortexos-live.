@@ -30,39 +30,57 @@ export default function CortexOSApp() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [terminalPrompt, setTerminalPrompt] = useState<string | undefined>(undefined);
   const [customBrainNodes, setCustomBrainNodes] = useState<BrainNode[]>([]);
+  const [loadedBrainNodes, setLoadedBrainNodes] = useState<BrainNode[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const handlePublishNodeToBrain = useCallback((newNode: BrainNode) => {
     setCustomBrainNodes((prev) => [newNode, ...prev]);
   }, []);
 
-  const handleSelectConnectedNode = (nodeId: string) => {
+  const handleSelectConnectedNode = async (nodeId: string) => {
     const found =
+      loadedBrainNodes.find((n) => n.id === nodeId) ||
       customBrainNodes.find((n) => n.id === nodeId) ||
       KEY_NODES.find((n) => n.id === nodeId);
     if (found) {
       setSelectedNode(found);
-    } else {
-      setSelectedNode({
-        id: nodeId,
-        title: nodeId
-          .replace("node-", "")
-          .replace(/-/g, " ")
-          .replace(/\b\w/g, (l) => l.toUpperCase()),
-        category: "Business wiki",
-        summary:
-          "Connected knowledge node in the CortexOS Second Brain constellation.",
-        notes: `# Connected Node: ${nodeId}\n\nAutomatically cross-referenced via Chief Librarian & AGENTS.md.`,
-        stalenessDays: 8,
-        needsAttention: false,
-        connections: ["node-jarvis-supervisor", "node-chief-librarian"],
-        tags: ["connected", "wiki-node"],
-        x: 10,
-        y: 20,
-        z: 30,
-        radius: 5,
-      });
+      return;
     }
+
+    try {
+      const res = await fetch(`/api/graph/${encodeURIComponent(nodeId)}?depth=2`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.nodes)) {
+          setLoadedBrainNodes(data.nodes);
+          const matched = data.nodes.find((n: BrainNode) => n.id === nodeId);
+          if (matched) {
+            setSelectedNode(matched);
+            return;
+          }
+        }
+      }
+    } catch {
+      // Fallback below if offline
+    }
+
+    setSelectedNode({
+      id: nodeId,
+      title: nodeId,
+      category: "Wiki Page",
+      summary: "Connected node in CortexOS Postgres brain graph.",
+      notes: `# Connected Node: ${nodeId}`,
+      stalenessDays: 0,
+      needsAttention: false,
+      connections: [],
+      tags: ["postgres-node"],
+      x: 0,
+      y: 0,
+      z: 0,
+      radius: 5,
+    });
   };
 
   const handleAskAiAboutNode = (node: BrainNode) => {
@@ -276,6 +294,7 @@ export default function CortexOSApp() {
             onSearchChange={setSearchQuery}
             customNodes={customBrainNodes}
             projectId={activeProjectId}
+            onGraphNodesLoaded={setLoadedBrainNodes}
           />
         )}
 
@@ -297,7 +316,7 @@ export default function CortexOSApp() {
                 handlePublishNodeToBrain({
                   id: `node-vault-${Date.now()}`,
                   title,
-                  category: "Business wiki",
+                  category: "Wiki Page",
                   kind: "note",
                   area: "system",
                   summary,

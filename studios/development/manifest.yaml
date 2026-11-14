@@ -1,0 +1,5 @@
+id: development
+name: Development Studio
+version: 1.0.0
+role: Implementation Specialist
+supported_artifacts: ['source_code', 'integration']

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dbQuery, toUuid } from "@/lib/db/client";
+import { dbQuery } from "@/lib/db/client";
 import { type BrainNode } from "@/lib/knowledge-data";
 import { sha256Hex } from "@/lib/cortex-os-data";
 
@@ -36,12 +36,10 @@ export async function GET(
         LEFT JOIN agents ag ON ag.id = bo.id
         LEFT JOIN sources src ON src.id = bo.id
         LEFT JOIN artifacts art ON art.id = bo.id
-        LEFT JOIN entities ent ON ent.id = bo.id AND ent.merged_into_id IS NULL
-        LEFT JOIN concepts con ON con.id = bo.id AND con.merged_into_id IS NULL
+        LEFT JOIN entities ent ON ent.id = bo.id
+        LEFT JOIN concepts con ON con.id = bo.id
         LEFT JOIN decisions dec ON dec.id = bo.id
         LEFT JOIN wiki_pages wp ON wp.id = bo.id
-       WHERE (ent.id IS NULL OR ent.merged_into_id IS NULL)
-         AND (con.id IS NULL OR con.merged_into_id IS NULL)
        ORDER BY bo.created_at ASC
     `;
 
@@ -165,7 +163,7 @@ export async function GET(
         stalenessDays: 0,
         needsAttention: false,
         connections: conns,
-        tags: [obj.object_type, obj.subtype].filter(Boolean),
+        tags: Array.from(new Set([obj.object_type, obj.subtype].filter(Boolean))),
         x: coords.x,
         y: coords.y,
         z: coords.z,

@@ -1,0 +1,29 @@
+[tool.cortexos]
+name = "cortexos"
+version = "0.1.0"
+python_requires = ">=3.12"
+
+[tool.uv.workspace]
+members = [
+  "packages/shared-types",
+  "packages/event-sdk",
+  "packages/artifact-sdk",
+  "packages/provider-sdk",
+  "packages/brain-sdk",
+  "packages/workflow-sdk",
+  "packages/agent-sdk",
+  "packages/studio-sdk",
+  "services/brain-service",
+  "services/librarian-service",
+  "services/graph-service",
+  "services/search-service",
+  "services/provider-service",
+  "services/studio-service",
+  "services/workflow-service",
+  "services/jarvis-service",
+  "services/auth-service",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
