@@ -13,9 +13,12 @@ import {
   deserializeWarRoomLayout,
   findPanelZone,
   isWarRoomPanelVisible,
+  isZoneAllowedForPanel,
+   getAllowedTargetZonesForPanel,
   moveWarRoomPanelToZone,
   serializeWarRoomLayout,
   setWarRoomMaximizedPanel,
+  stepWarRoomZoneDimension,
   toggleWarRoomPanelVisibility,
   toggleWarRoomZoneCollapsed,
 } from "./workspace-state.ts";
@@ -183,4 +186,81 @@ describe("Step 1: War Room Workspace State Foundation", () => {
     assert.ok(telemetry.nextStepLabel.length > 0);
     assert.ok(telemetry.nextStepCommand.length > 0);
   });
+
+  it("Step 2 WarRoomHeader telemetry prioritizes pending approvals and blocked agents for Next Action", () => {
+    const withApproval = deriveWarRoomGoldenRuleTelemetry({
+      activeMission: "analyze-knowledge",
+      activeProject: PROJECT_CONTEXTS_SEED[0],
+      agents: DOCK_AGENTS_SEED,
+      selectedProvider: "openai",
+      selectedModel: "gpt-4.1",
+      isExecutingCommand: true,
+      workflows: INITIAL_WORKFLOW_FEED,
+      toolActivityFeed: INITIAL_TOOL_ACTIVITY_FEED,
+      artifactFeed: INITIAL_ARTIFACT_FEED,
+      activityFeed: INITIAL_ACTIVITY_FEED,
+      pendingApprovals: [
+        {
+          id: "appr-1",
+          projectId: "proj-solar-crm",
+          workflowId: "wf-1",
+          title: "OpenAPI 3.1 Gate Spec",
+          requestedBy: "Architecture Studio",
+          reason: "Phase gate transition check",
+          status: "pending",
+          createdAt: "14:20:00",
+        },
+      ],
+      latestTerminalCompound: null,
+    });
+
+    assert.equal(withApproval.activeMissionTitle, "Analyze Knowledge");
+    assert.equal(withApproval.executionState, "executing");
+    assert.equal(withApproval.nextStepTargetPanel, "artifacts");
+    assert.ok(withApproval.nextStepLabel.includes("Review & Approve Gate: OpenAPI 3.1 Gate Spec"));
+    assert.ok(withApproval.nextStepReason.includes("Architecture Studio"));
+  });
+
+  it("Step 3 DockZoneFrame enforces allowedZones at state/UI levels and supports keyboard resize stepping", () => {
+    // 1. UI helper & metadata check
+    assert.equal(isZoneAllowedForPanel("chat", "center"), true);
+    assert.equal(isZoneAllowedForPanel("chat", "bottom"), false);
+    assert.equal(isZoneAllowedForPanel("harness", "center"), false);
+    assert.deepEqual(getAllowedTargetZonesForPanel("chat"), ["center", "left", "right"]);
+    assert.deepEqual(getAllowedTargetZonesForPanel("harness"), ["left", "right", "bottom"]);
+
+    // 2. State-level enforcement in moveWarRoomPanelToZone
+    let layout = createDefaultWarRoomLayout("mission-execution");
+    // Attempting to move 'harness' to 'center' (disallowed) must be rejected
+    layout = moveWarRoomPanelToZone(layout, "harness", "center");
+    assert.equal(findPanelZone(layout, "harness"), "left");
+    assert.ok(!layout.zones.center.panelIds.includes("harness"));
+
+    // Attempting to move 'chat' to 'bottom' (disallowed) must be rejected
+    layout = moveWarRoomPanelToZone(layout, "chat", "bottom");
+    assert.equal(findPanelZone(layout, "chat"), "center");
+    assert.ok(!layout.zones.bottom.panelIds.includes("chat"));
+
+    // 3. Deserialization self-healing when saved JSON places a panel in a disallowed zone
+    const tampered = JSON.parse(serializeWarRoomLayout(layout));
+    tampered.zones.center.panelIds.push("harness"); // harness is not allowed in center
+    tampered.zones.left.panelIds = tampered.zones.left.panelIds.filter(
+      (id: string) => id !== "harness"
+    );
+    const healed = deserializeWarRoomLayout(JSON.stringify(tampered));
+    assert.ok(!healed.zones.center.panelIds.includes("harness"));
+    assert.equal(findPanelZone(healed, "harness"), "left"); // healed back to defaultZone ("left")
+
+    // 4. Keyboard-accessible resize stepping
+    const initialDims = layout.dimensions;
+    const steppedLeft = stepWarRoomZoneDimension(initialDims, "left", 1);
+    assert.equal(steppedLeft.leftWidthPx, initialDims.leftWidthPx + 24);
+
+    const minRight = stepWarRoomZoneDimension(initialDims, "right", "min");
+    assert.equal(minRight.rightWidthPx, ZONE_DIMENSION_BOUNDS.rightWidthPx.min);
+
+    const maxBottom = stepWarRoomZoneDimension(initialDims, "bottom", "max");
+    assert.equal(maxBottom.bottomHeightPx, ZONE_DIMENSION_BOUNDS.bottomHeightPx.max);
+  });
 });
+

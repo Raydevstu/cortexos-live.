@@ -41,6 +41,9 @@ import {
   canTransitionLifecyclePhase,
 } from "@/lib/cortex-os-data";
 import { BrainNode } from "@/lib/knowledge-data";
+import { useAgentOS } from "@/lib/agent-os-store";
+import WarRoomHeader from "@/components/war-room/WarRoomHeader";
+import type { WarRoomPanelId } from "@/lib/war-room/workspace-state";
 import {
   BookOpen,
   Check,
@@ -161,6 +164,7 @@ export default function WarRoom({
   activeProjectId: propActiveProjectId,
   onActiveProjectIdChange,
 }: WarRoomProps) {
+  const { setTerminalExpanded, runTerminalCommand } = useAgentOS();
   // Core CortexOS Domain State (React cache hydrated from PostgreSQL source of truth)
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
   const [internalActiveProjectId, setInternalActiveProjectId] = useState<string>("proj-solar-crm");
@@ -908,117 +912,61 @@ export default function WarRoom({
     }
   };
 
+  const handleLegacyPanelBridge = useCallback(
+    (panelId: WarRoomPanelId) => {
+      if (panelId === "chat" || panelId === "tasks") {
+        setCenterTab("council");
+      } else if (panelId === "artifacts") {
+        setCenterTab("artifacts");
+      } else if (panelId === "logs") {
+        setCenterTab("schema");
+      } else if (panelId === "context") {
+        setCenterTab("wiki");
+      } else if (panelId === "sandbox" || panelId === "activity") {
+        setRightPanelMode((m) => (m === "collapsed" ? "docked" : m));
+      } else if (panelId === "terminal" || panelId === "harness") {
+        setTerminalExpanded(true);
+      }
+    },
+    [setTerminalExpanded]
+  );
+
+  const handleExecuteNextStep = useCallback(
+    (command: string, targetPanel: WarRoomPanelId) => {
+      handleLegacyPanelBridge(targetPanel);
+      setJarvisDirective(command);
+      void runTerminalCommand(command);
+    },
+    [handleLegacyPanelBridge, runTerminalCommand]
+  );
+
   return (
     <div className="flex flex-col w-full h-full bg-[#0c0d0f] text-[#e4e6eb] overflow-hidden">
       {/* ==================================================================== */}
-      {/* PINNED JARVIS SUPERVISOR GOVERNANCE BAR                              */}
+      {/* STEP 2: WAR ROOM HEADER (GOVERNANCE + 5-SECOND GOLDEN RULE + 9 PANELS) */}
       {/* ==================================================================== */}
-      <div className="shrink-0 px-5 py-2.5 bg-[#0c0d0f] border-b border-[#e4e6eb]/15 flex items-center justify-between gap-3">
-        {/* Left: Active Project Selector */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <div className="flex items-center gap-1.5 text-[11px] font-mono font-bold tracking-wider text-[#00ffa3]">
-            <Cpu className="w-3.5 h-3.5 shrink-0" />
-            <span>JARVIS_SVC</span>
-          </div>
-          <span className="text-[#e4e6eb]/30" aria-hidden="true">
-            ·
-          </span>
-          <label htmlFor="war-room-project-select" className="sr-only">
-            Active Project
-          </label>
-          <select
-            id="war-room-project-select"
-            aria-label="Active Project"
-            value={activeProject.id}
-            onChange={(e) => setActiveProjectId(e.target.value)}
-            className="bg-black border border-[#e4e6eb]/20 rounded-[2px] px-2.5 py-1 text-xs font-mono text-white outline-none focus:border-[#00ffa3]"
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            onClick={() => setIsCreatingProject(!isCreatingProject)}
-            className="px-2.5 py-1 rounded-[2px] bg-transparent hover:bg-[#e4e6eb]/10 border border-[#e4e6eb]/20 text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb] transition-colors whitespace-nowrap shrink-0"
-          >
-            + New Project
-          </button>
-        </div>
-
-        {/* Center: 7-Phase Lifecycle Stepper */}
-        <div
-          className="flex items-center gap-1 overflow-x-auto py-0.5"
-          role="group"
-          aria-label="Project Lifecycle Phases"
-        >
-          {LIFECYCLE_PHASES.map((phase, idx) => {
-            const isCurrent = activeProject.current_phase === phase;
-            const currentIdx = LIFECYCLE_PHASES.indexOf(activeProject.current_phase);
-            const isCompleted = idx < currentIdx;
-            return (
-              <button
-                key={phase}
-                type="button"
-                onClick={() => handleSelectPhase(phase)}
-                className={`px-2.5 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 ${
-                  isCurrent
-                    ? "bg-[#00ffa3] text-black font-bold"
-                    : isCompleted
-                    ? "bg-[#003322] text-[#00ffa3] border border-[#00ffa3]/40 hover:bg-[#003322]/80"
-                    : "bg-[#e4e6eb]/10 text-[#e4e6eb]/55 hover:text-[#e4e6eb] border border-transparent"
-                }`}
-              >
-                <span className="tabular-nums">{idx + 1}.</span>
-                <span>{phase}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Right: Quick Stats, Unlock Button & Right Panel Toggle */}
-        <div className="flex items-center gap-2.5 text-[11px] text-[#e4e6eb]/60 font-mono tabular-nums shrink-0">
-          <span className="hidden xl:inline">
-            {sources.length} SOURCES · {artifacts.length} ARTIFACTS · {wikiPages.length} WIKI PAGES
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setUnlockPromptReason(null);
-              setIsUnlockModalOpen(true);
-            }}
-            aria-label="Unlock"
-            className={`px-2.5 py-1 rounded-[2px] border text-[10px] font-mono uppercase tracking-wider flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
-              isOwnerUnlocked
-                ? "bg-[#003322] border-[#00ffa3] text-[#00ffa3]"
-                : "bg-black border-[#e4e6eb]/25 text-[#e4e6eb] hover:border-[#00ffa3] hover:text-[#00ffa3]"
-            }`}
-          >
-            {isOwnerUnlocked ? (
-              <Unlock className="w-3 h-3 text-[#00ffa3]" />
-            ) : (
-              <Lock className="w-3 h-3 text-amber-400" />
-            )}
-            <span>Unlock</span>
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              setRightPanelMode((m) => (m === "collapsed" ? "docked" : "collapsed"))
-            }
-            aria-label="Toggle Studio Workbench Panel"
-            className="p-1.5 rounded-[2px] bg-black border border-[#e4e6eb]/20 text-[#e4e6eb]/80 hover:text-[#00ffa3] hover:border-[#00ffa3] transition-colors"
-          >
-            {rightPanelMode === "collapsed" ? (
-              <PanelRightOpen className="w-3.5 h-3.5" />
-            ) : (
-              <PanelRightClose className="w-3.5 h-3.5" />
-            )}
-          </button>
-        </div>
-      </div>
+      <WarRoomHeader
+        projects={projects}
+        activeProject={activeProject}
+        onSelectProject={setActiveProjectId}
+        isCreatingProject={isCreatingProject}
+        onToggleCreateProject={() => setIsCreatingProject(!isCreatingProject)}
+        onSelectPhase={handleSelectPhase}
+        sourcesCount={sources.length}
+        artifactsCount={artifacts.length}
+        wikiPagesCount={wikiPages.length}
+        isOwnerUnlocked={isOwnerUnlocked}
+        onOpenUnlockModal={() => {
+          setUnlockPromptReason(null);
+          setIsUnlockModalOpen(true);
+        }}
+        rightPanelCollapsed={rightPanelMode === "collapsed"}
+        onToggleRightPanel={() =>
+          setRightPanelMode((m) => (m === "collapsed" ? "docked" : "collapsed"))
+        }
+        onLegacyPanelBridge={handleLegacyPanelBridge}
+        onExecuteNextStep={handleExecuteNextStep}
+      />
 
       {/* Owner Key Unlock Modal (sessionStorage only) */}
       {isUnlockModalOpen && (

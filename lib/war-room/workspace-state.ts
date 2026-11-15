@@ -533,6 +533,54 @@ export function isWarRoomPanelVisible(
   return !layout.zones[zoneId].collapsed;
 }
 
+export function isZoneAllowedForPanel(
+  panelId: WarRoomPanelId,
+  targetZoneId: DockZoneId
+): boolean {
+  const meta = WAR_ROOM_PANELS[panelId];
+  if (!meta) return false;
+  return meta.allowedZones.includes(targetZoneId);
+}
+
+export function getAllowedTargetZonesForPanel(
+  panelId: WarRoomPanelId
+): readonly DockZoneId[] {
+  return WAR_ROOM_PANELS[panelId]?.allowedZones ?? DOCK_ZONE_IDS;
+}
+
+export function stepWarRoomZoneDimension(
+  dimensions: ZoneDimensions,
+  zoneId: Exclude<DockZoneId, "center">,
+  stepDirection: 1 | -1 | "min" | "max"
+): ZoneDimensions {
+  const clamped = clampZoneDimensions(dimensions);
+  if (zoneId === "left") {
+    const nextVal =
+      stepDirection === "min"
+        ? ZONE_DIMENSION_BOUNDS.leftWidthPx.min
+        : stepDirection === "max"
+          ? ZONE_DIMENSION_BOUNDS.leftWidthPx.max
+          : clamped.leftWidthPx + stepDirection * ZONE_DIMENSION_BOUNDS.leftWidthPx.step;
+    return clampZoneDimensions({ leftWidthPx: nextVal }, clamped);
+  }
+  if (zoneId === "right") {
+    const nextVal =
+      stepDirection === "min"
+        ? ZONE_DIMENSION_BOUNDS.rightWidthPx.min
+        : stepDirection === "max"
+          ? ZONE_DIMENSION_BOUNDS.rightWidthPx.max
+          : clamped.rightWidthPx + stepDirection * ZONE_DIMENSION_BOUNDS.rightWidthPx.step;
+    return clampZoneDimensions({ rightWidthPx: nextVal }, clamped);
+  }
+  const nextVal =
+    stepDirection === "min"
+      ? ZONE_DIMENSION_BOUNDS.bottomHeightPx.min
+      : stepDirection === "max"
+        ? ZONE_DIMENSION_BOUNDS.bottomHeightPx.max
+        : clamped.bottomHeightPx + stepDirection * ZONE_DIMENSION_BOUNDS.bottomHeightPx.step;
+  return clampZoneDimensions({ bottomHeightPx: nextVal }, clamped);
+}
+
 /**
  * Deterministically activates a panel in its current zone, unhiding it and
  * expanding its zone if collapsed.
@@ -564,13 +612,19 @@ export function activateWarRoomPanel(
 
 /**
  * Deterministically moves a panel to a target fixed zone (left, center, right, bottom)
- * without drag-and-drop. Enforces that `center` never becomes completely empty.
+ * without drag-and-drop. Enforces `allowedZones` metadata at the state level and
+ * guarantees that `center` never becomes completely empty.
  */
 export function moveWarRoomPanelToZone(
   layout: WarRoomLayoutState,
   panelId: WarRoomPanelId,
   targetZoneId: DockZoneId
 ): WarRoomLayoutState {
+  // Enforce allowedZones metadata at the state transition level
+  if (!isZoneAllowedForPanel(panelId, targetZoneId)) {
+    return layout;
+  }
+
   const sourceZoneId = findPanelZone(layout, panelId);
   if (sourceZoneId === targetZoneId) {
     return activateWarRoomPanel(layout, panelId);
@@ -642,7 +696,9 @@ export function toggleWarRoomPanelVisibility(
 
   const nextHidden = Array.from(new Set([...layout.hiddenPanelIds, panelId]));
   const nextActive =
-    zone.activePanelId === panelId ? visibleInZone[0] ?? zone.panelIds[0] ?? null : zone.activePanelId;
+    zone.activePanelId === panelId
+      ? visibleInZone[0] ?? zone.panelIds[0] ?? null
+      : zone.activePanelId;
 
   return {
     ...layout,
@@ -711,14 +767,20 @@ export function deserializeWarRoomLayout(raw: string | null | undefined): WarRoo
         : "mission-execution";
     const base = createDefaultWarRoomLayout(presetId);
 
+    const assignedPanels = new Set<WarRoomPanelId>();
     const validatedZones: Record<DockZoneId, DockZoneState> = { ...base.zones };
+
     for (const zoneId of DOCK_ZONE_IDS) {
       const candidate = parsed.zones[zoneId];
       if (candidate && Array.isArray(candidate.panelIds)) {
-        const validPanels = candidate.panelIds.filter((id): id is WarRoomPanelId =>
-          WAR_ROOM_PANEL_IDS.includes(id)
+        const validPanels = candidate.panelIds.filter(
+          (id): id is WarRoomPanelId =>
+            WAR_ROOM_PANEL_IDS.includes(id) &&
+            isZoneAllowedForPanel(id, zoneId) &&
+            !assignedPanels.has(id)
         );
         if (validPanels.length > 0) {
+          validPanels.forEach((id) => assignedPanels.add(id));
           validatedZones[zoneId] = {
             zoneId,
             panelIds: validPanels,
@@ -729,6 +791,23 @@ export function deserializeWarRoomLayout(raw: string | null | undefined): WarRoo
             collapsed: zoneId === "center" ? false : Boolean(candidate.collapsed),
           };
         }
+      }
+    }
+
+    // Self-heal any unassigned panel back into its defaultZone
+    for (const panelId of WAR_ROOM_PANEL_IDS) {
+      const alreadyPresent = DOCK_ZONE_IDS.some((zId) =>
+        validatedZones[zId].panelIds.includes(panelId)
+      );
+      if (!alreadyPresent) {
+        const defaultZone = WAR_ROOM_PANELS[panelId].defaultZone;
+        const zone = validatedZones[defaultZone];
+        const nextPanels = [...zone.panelIds, panelId];
+        validatedZones[defaultZone] = {
+          ...zone,
+          panelIds: nextPanels,
+          activePanelId: zone.activePanelId ?? nextPanels[0],
+        };
       }
     }
 

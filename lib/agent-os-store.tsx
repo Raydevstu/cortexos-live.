@@ -248,6 +248,7 @@ export function AgentOSProvider({ children }: { children: React.ReactNode }) {
   const [isBlueprintOpen, setIsBlueprintOpen] = useState<boolean>(false);
 
   // Step 1: War Room Workspace State Foundation
+  // TODO: Before Mission Launcher is released, the default experience must become Consumer.
   const [disclosureLevel, setDisclosureLevel] = useState<DisclosureLevel>("operator");
   const [activeMission, setActiveMissionState] = useState<MissionId>("build-software");
   const [warRoomLayout, setWarRoomLayout] = useState<WarRoomLayoutState>(() =>
