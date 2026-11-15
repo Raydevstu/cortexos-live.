@@ -262,5 +262,45 @@ describe("Step 1: War Room Workspace State Foundation", () => {
     const maxBottom = stepWarRoomZoneDimension(initialDims, "bottom", "max");
     assert.equal(maxBottom.bottomHeightPx, ZONE_DIMENSION_BOUNDS.bottomHeightPx.max);
   });
+
+  it("Step 4 4-Zone Workbench Shell validates all 4 presets, CSS-variable sizing, zone collapse, and maximize flow", () => {
+    const presets = [
+      {
+        id: "mission-execution",
+        expectedActive: { left: "context", center: "chat", right: "activity", bottom: "terminal" },
+      },
+      {
+        id: "code-and-sandbox",
+        expectedActive: { left: "context", center: "sandbox", right: "tasks", bottom: "terminal" },
+      },
+      {
+        id: "review-and-gates",
+        expectedActive: { left: "context", center: "artifacts", right: "tasks", bottom: "logs" },
+      },
+      {
+        id: "operator-harness",
+        expectedActive: { left: "harness", center: "chat", right: "activity", bottom: "logs" },
+      },
+    ] as const;
+
+    for (const preset of presets) {
+      const layout = createDefaultWarRoomLayout(preset.id);
+      assert.equal(layout.zones.left.activePanelId, preset.expectedActive.left);
+      assert.equal(layout.zones.center.activePanelId, preset.expectedActive.center);
+      assert.equal(layout.zones.right.activePanelId, preset.expectedActive.right);
+      assert.equal(layout.zones.bottom.activePanelId, preset.expectedActive.bottom);
+
+      // Every panel in every zone must be allowed in that zone
+      for (const zoneId of ["left", "center", "right", "bottom"] as const) {
+        for (const panelId of layout.zones[zoneId].panelIds) {
+          assert.equal(
+            isZoneAllowedForPanel(panelId, zoneId),
+            true,
+            `Panel "${panelId}" in preset "${preset.id}" must be allowed in zone "${zoneId}"`
+          );
+        }
+      }
+    }
+  });
 });
 

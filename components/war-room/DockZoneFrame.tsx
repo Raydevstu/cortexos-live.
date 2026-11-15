@@ -242,7 +242,7 @@ export default function DockZoneFrame({
             : zoneId === "left"
             ? "w-9 h-full border-r flex-col items-center justify-between py-3"
             : "w-9 h-full border-l flex-col items-center justify-between py-3"
-        } shrink-0 ${className}`}
+        } shrink-0`}
       >
         <button
           type="button"

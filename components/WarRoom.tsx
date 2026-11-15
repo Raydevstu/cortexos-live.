@@ -42,7 +42,9 @@ import {
 } from "@/lib/cortex-os-data";
 import { BrainNode } from "@/lib/knowledge-data";
 import { useAgentOS } from "@/lib/agent-os-store";
+import { PROVIDERS_CATALOG, type ProviderId } from "@/lib/agent-os-logic";
 import WarRoomHeader from "@/components/war-room/WarRoomHeader";
+import WarRoomWorkbenchShell from "@/components/war-room/WarRoomWorkbenchShell";
 import type { WarRoomPanelId } from "@/lib/war-room/workspace-state";
 import {
   BookOpen,
@@ -164,7 +166,28 @@ export default function WarRoom({
   activeProjectId: propActiveProjectId,
   onActiveProjectIdChange,
 }: WarRoomProps) {
-  const { setTerminalExpanded, runTerminalCommand } = useAgentOS();
+  const {
+    agents,
+    selectedProvider,
+    setSelectedProvider,
+    selectedModel,
+    setSelectedModel,
+    setTerminalExpanded,
+    terminalHistory,
+    isExecutingCommand,
+    runTerminalCommand,
+    workflows,
+    pendingApprovals,
+    toolActivityFeed,
+    warRoomLayout,
+    goldenRuleTelemetry,
+    activateWarRoomPanel,
+    toggleWarRoomZoneCollapsed,
+    submitApprovalDecision,
+    triggerProviderFailover,
+  } = useAgentOS();
+  const [terminalCmdInput, setTerminalCmdInput] = useState("");
+  const [contextSubTab, setContextSubTab] = useState<"sources" | "wiki">("sources");
   // Core CortexOS Domain State (React cache hydrated from PostgreSQL source of truth)
   const [projects, setProjects] = useState<Project[]>(INITIAL_PROJECTS);
   const [internalActiveProjectId, setInternalActiveProjectId] = useState<string>("proj-solar-crm");
@@ -179,8 +202,8 @@ export default function WarRoom({
   const [studios, setStudios] = useState<Studio[]>(INITIAL_STUDIOS);
   const [sources, setSources] = useState<Source[]>(INITIAL_SOURCES);
   const [artifacts, setArtifacts] = useState<Artifact[]>(INITIAL_ARTIFACTS);
-  const [entities, setEntities] = useState<Entity[]>(INITIAL_ENTITIES);
-  const [concepts, setConcepts] = useState<Concept[]>(INITIAL_CONCEPTS);
+  const [, setEntities] = useState<Entity[]>(INITIAL_ENTITIES);
+  const [, setConcepts] = useState<Concept[]>(INITIAL_CONCEPTS);
   const [decisions, setDecisions] = useState<Decision[]>(INITIAL_DECISIONS);
   const [wikiPages, setWikiPages] = useState<WikiPage[]>(INITIAL_WIKI_PAGES);
   const [claims, setClaims] = useState<Claim[]>(INITIAL_CLAIMS);
@@ -921,7 +944,7 @@ export default function WarRoom({
       } else if (panelId === "logs") {
         setCenterTab("schema");
       } else if (panelId === "context") {
-        setCenterTab("wiki");
+        setContextSubTab("sources");
       } else if (panelId === "sandbox" || panelId === "activity") {
         setRightPanelMode((m) => (m === "collapsed" ? "docked" : m));
       } else if (panelId === "terminal" || panelId === "harness") {
@@ -939,6 +962,1567 @@ export default function WarRoom({
     },
     [handleLegacyPanelBridge, runTerminalCommand]
   );
+
+  const handleRunInlineTerminalCommand = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const cmd = terminalCmdInput.trim();
+      if (!cmd) return;
+      setTerminalCmdInput("");
+      void runTerminalCommand(cmd);
+    },
+    [terminalCmdInput, runTerminalCommand]
+  );
+
+  // ==========================================================================
+  // STEP 4: LEGACY WAR ROOM ADAPTER LAYER (PRESERVES ALL LEGACY IMPLEMENTATIONS)
+  // ==========================================================================
+  const renderSourcesLegacySection = () => (
+    <div
+      aria-label="Research and Sources Panel"
+      className="flex-1 flex flex-col min-h-0 bg-[#0c0d0f] overflow-hidden"
+    >
+      <div className="p-3.5 border-b border-[#e4e6eb]/15 bg-white/[0.02] space-y-2.5 shrink-0">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#e4e6eb]">
+              01. Research Sources
+            </h2>
+            <p className="text-[10px] font-mono text-[#e4e6eb]/50 mt-0.5">
+              Immutable Layer 1 (`brain/raw/`) · Chief Librarian
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsAddingSource(!isAddingSource)}
+            className="px-2.5 py-1 rounded-[2px] bg-transparent border border-[#00ffa3] text-[#00ffa3] hover:bg-[#003322] font-mono font-bold text-[10px] uppercase tracking-wider flex items-center gap-1 whitespace-nowrap shrink-0"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Add Source</span>
+          </button>
+        </div>
+
+        {/* Search & Trust Filter */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 text-[#e4e6eb]/40 absolute left-2.5 top-2" />
+            <input
+              type="text"
+              aria-label="Search Knowledge Sources"
+              placeholder="SEARCH HASHES..."
+              value={sourceSearch}
+              onChange={(e) => setSourceSearch(e.target.value)}
+              className="w-full pl-8 pr-2.5 py-1.5 rounded-[2px] bg-black border border-[#e4e6eb]/15 font-mono text-[11px] text-[#00ffa3] placeholder-[#e4e6eb]/35 outline-none focus:border-[#00ffa3]"
+            />
+          </div>
+          <select
+            aria-label="Filter Source Trust Level"
+            value={trustFilter}
+            onChange={(e) => setTrustFilter(e.target.value as "all" | TrustLevel)}
+            className="bg-black border border-[#e4e6eb]/15 rounded-[2px] px-2 py-1.5 font-mono text-[10px] uppercase text-[#e4e6eb]/80 outline-none focus:border-[#00ffa3]"
+          >
+            <option value="all">All Trust</option>
+            <option value="trusted">Trusted</option>
+            <option value="untrusted">Untrusted</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Add & Ingest Source Form */}
+      {isAddingSource && (
+        <form
+          onSubmit={handleIngestSource}
+          className="p-3.5 border-b border-[#e4e6eb]/15 bg-black space-y-2 shrink-0"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#00ffa3]">
+              Ingest Source via Chief Librarian
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsAddingSource(false)}
+              className="text-xs font-mono text-[#e4e6eb]/50 hover:text-white"
+            >
+              Close
+            </button>
+          </div>
+          <input
+            type="text"
+            aria-label="New Source Title"
+            placeholder="Source Title (e.g. Q4 Enterprise Security Requirements)"
+            value={newSourceTitle}
+            onChange={(e) => setNewSourceTitle(e.target.value)}
+            className="w-full px-2.5 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-white outline-none focus:border-[#00ffa3]"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <select
+              aria-label="New Source Kind"
+              value={newSourceKind}
+              onChange={(e) => setNewSourceKind(e.target.value as SourceKind)}
+              className="px-2 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-[#e4e6eb] outline-none"
+            >
+              <option value="markdown">Markdown Note</option>
+              <option value="url">Web URL</option>
+              <option value="pdf">PDF Document</option>
+              <option value="repo">GitHub Repo</option>
+              <option value="transcript">Meeting Transcript</option>
+            </select>
+            <select
+              aria-label="New Source Trust Level"
+              value={newSourceTrust}
+              onChange={(e) => setNewSourceTrust(e.target.value as TrustLevel)}
+              className="px-2 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-[#e4e6eb] outline-none"
+            >
+              <option value="untrusted">Untrusted (Data Only)</option>
+              <option value="trusted">Trusted</option>
+            </select>
+          </div>
+          <input
+            type="text"
+            aria-label="Source URI or Path"
+            placeholder="Optional URL or GitHub Repo URI"
+            value={newSourceUri}
+            onChange={(e) => setNewSourceUri(e.target.value)}
+            className="w-full px-2.5 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-white outline-none focus:border-[#00ffa3]"
+          />
+          <textarea
+            rows={3}
+            aria-label="Raw Source Content"
+            placeholder="Paste raw markdown, research findings, or transcript text..."
+            value={newSourceContent}
+            onChange={(e) => setNewSourceContent(e.target.value)}
+            className="w-full p-2 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs text-[#e4e6eb] outline-none focus:border-[#00ffa3] font-mono"
+          />
+          <button
+            type="submit"
+            disabled={isIngestingSource}
+            className="w-full py-1.5 rounded-[2px] bg-[#00ffa3] hover:brightness-110 disabled:opacity-50 text-black font-extrabold text-[11px] uppercase tracking-wider transition-all"
+          >
+            {isIngestingSource
+              ? "Chief Librarian Extracting & Rippling..."
+              : "Ingest & Ripple into Brain"}
+          </button>
+        </form>
+      )}
+
+      {/* Sources List or Hybrid Search Results */}
+      <div className="flex-1 overflow-y-auto divide-y divide-[#e4e6eb]/10">
+        {sourceSearch.trim() && searchResults !== null ? (
+          <div>
+            <div className="px-4 py-2 bg-[#003322]/40 border-b border-[#00ffa3]/20 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-[#00ffa3]">
+              <span>
+                {isSearching ? "Searching..." : `Search · ${searchResults.length} Results`}
+              </span>
+              <span>RRF + Vector + FTS</span>
+            </div>
+            {searchResults.length === 0 ? (
+              <div className="p-4 text-center text-xs font-mono text-[#e4e6eb]/50">
+                No hybrid search matches for &quot;{sourceSearch}&quot;
+              </div>
+            ) : (
+              searchResults.map((hit, idx) => {
+                const isSelected =
+                  selectedSource?.id === hit.source_id ||
+                  selectedSource?.id === hit.object_id;
+                return (
+                  <button
+                    key={`${hit.object_id}-${hit.chunk_index ?? idx}`}
+                    type="button"
+                    onClick={() => {
+                      const targetSrc =
+                        sources.find((s) => s.id === hit.source_id) ||
+                        sources.find((s) => s.id === hit.object_id);
+                      if (targetSrc) {
+                        setSelectedSourceId(targetSrc.id);
+                      }
+                    }}
+                    className={`block w-full text-left px-4 py-2.5 transition-colors ${
+                      isSelected
+                        ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
+                        : "hover:bg-white/[0.03]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
+                        {hit.title}
+                      </div>
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black border border-[#00ffa3]/40 text-[#00ffa3] shrink-0">
+                        RRF: {hit.rrf_score.toFixed(4)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] font-mono text-[#e4e6eb]/60 line-clamp-2 leading-relaxed">
+                      {hit.snippet}
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
+                      <span className="text-[#00ffa3]">{hit.object_type}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>Cosine: {(hit.cosine_similarity * 100).toFixed(0)}%</span>
+                      {hit.citations.length > 0 && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-amber-400">
+                            {hit.citations.length} Citation{hit.citations.length > 1 ? "s" : ""}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : (
+          filteredSources.map((src) => {
+            const isSelected = selectedSource?.id === src.id;
+            return (
+              <button
+                key={src.id}
+                type="button"
+                onClick={() => setSelectedSourceId(src.id)}
+                className={`block w-full text-left px-4 py-2.5 transition-colors ${
+                  isSelected
+                    ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
+                    : "hover:bg-white/[0.03]"
+                }`}
+              >
+                <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
+                  {src.title}
+                </div>
+                <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
+                  <span
+                    className={
+                      src.trust === "trusted" ? "text-[#00ffa3]" : "text-amber-400"
+                    }
+                  >
+                    {src.trust}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>{src.kind}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{src.content_hash.slice(0, 8)}</span>
+                </div>
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {/* Selected Source Immutable Inspector Footer */}
+      {selectedSource && (
+        <div className="p-3 border-t border-[#e4e6eb]/15 bg-black space-y-1.5 shrink-0">
+          <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.12em] text-[#e4e6eb]/50">
+            <span className="truncate">{selectedSource.storage_path}</span>
+            <span className="text-[#00ffa3] shrink-0">{selectedSource.ingest_status}</span>
+          </div>
+          <pre className="h-28 overflow-y-auto text-[10px] text-[#88edff] font-mono whitespace-pre-wrap leading-relaxed bg-[#050608] p-2.5 rounded-[4px] border border-[#e4e6eb]/15">
+            {selectedSource.raw_content}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderWikiLegacySection = () => (
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden bg-[#0c0d0f]">
+      {/* Left Wiki Catalog (5 cols) */}
+      <div className="lg:col-span-5 border-r border-[#e4e6eb]/15 flex flex-col min-h-0">
+        <div className="p-3 border-b border-[#e4e6eb]/15 flex items-center justify-between bg-black shrink-0">
+          <span className="text-[11px] font-mono uppercase tracking-wider text-[#e4e6eb]">
+            Karpathy LLM Wiki (`brain/wiki/`)
+          </span>
+          <label className="flex items-center gap-1.5 text-[10px] font-mono text-[#e4e6eb]/75 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={onlyAgentVisibleWiki}
+              onChange={(e) => setOnlyAgentVisibleWiki(e.target.checked)}
+              className="rounded border-[#e4e6eb]/30"
+            />
+            <span>`agent_visible_wiki_pages` only</span>
+          </label>
+        </div>
+
+        <div className="flex-1 overflow-y-auto divide-y divide-[#e4e6eb]/10">
+          {displayedWikiPages.map((page) => {
+            const visible = isWikiPageVisibleToAgents(page);
+            const isSel = selectedWikiPage?.id === page.id;
+            return (
+              <button
+                key={page.id}
+                type="button"
+                onClick={() => setSelectedWikiId(page.id)}
+                className={`block w-full text-left p-3 transition-colors ${
+                  isSel
+                    ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
+                    : "hover:bg-white/[0.02]"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
+                  <span className="text-[#00ffa3]">wiki/{page.path}</span>
+                  <span className={visible ? "text-[#00ffa3]" : "text-amber-400"}>
+                    {visible ? "Agent-Visible" : "Hidden (Needs Approval)"}
+                  </span>
+                </div>
+                <div className="text-xs font-semibold text-white mt-1">
+                  {page.title}
+                </div>
+                <div className="mt-1 flex items-center gap-2 text-[10px] font-mono text-[#e4e6eb]/55">
+                  <span>Type: {page.page_type}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>v{page.current_version}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Review: {page.review_state}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Right Wiki Page & Provenance Claims Viewer (7 cols) */}
+      {selectedWikiPage && (
+        <div className="lg:col-span-7 p-4 overflow-y-auto space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-[#e4e6eb]/15">
+            <div>
+              <div className="text-xs font-mono text-[#c084fc]">
+                brain/wiki/{selectedWikiPage.path} · v{selectedWikiPage.current_version}
+              </div>
+              <h3 className="text-base font-bold text-white mt-1">
+                {selectedWikiPage.title}
+              </h3>
+              <p className="text-xs text-[#e4e6eb]/65 mt-1">
+                {selectedWikiPage.summary}
+              </p>
+            </div>
+
+            {selectedWikiPage.requires_approval &&
+              selectedWikiPage.review_state !== "approved" && (
+                <button
+                  type="button"
+                  onClick={() => handleApproveWikiPage(selectedWikiPage.id)}
+                  className="px-3.5 py-1.5 rounded-[2px] bg-[#00ffa3] hover:brightness-110 text-black font-extrabold text-[11px] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>Approve Doctrine (Expose to Agents)</span>
+                </button>
+              )}
+          </div>
+
+          <pre className="p-3.5 rounded-[4px] bg-black border border-[#e4e6eb]/15 text-xs font-mono text-[#88edff] whitespace-pre-wrap leading-relaxed">
+            {selectedWikiPage.markdown_body}
+          </pre>
+
+          {/* Provenance Claims Table */}
+          <div className="space-y-2">
+            <h4 className="text-xs font-mono uppercase tracking-wider text-white">
+              Provenance Claims Ledger (`claims` Table — Zero Editorial Trap Guarantee)
+            </h4>
+            <div className="border border-[#e4e6eb]/15 rounded-[2px] overflow-hidden">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-black border-b border-[#e4e6eb]/15 text-[#e4e6eb]/60 font-mono text-[10px] uppercase">
+                    <th className="py-2 px-3">Verbatim Claim / Evidence</th>
+                    <th className="py-2 px-3">Provenance Ref</th>
+                    <th className="py-2 px-3 text-right">Confidence</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#e4e6eb]/10">
+                  {claims.map((c) => (
+                    <tr key={c.id} className="hover:bg-white/[0.02]">
+                      <td className="py-2 px-3 text-[#e4e6eb]">{c.claim_text}</td>
+                      <td className="py-2 px-3 font-mono text-[#00ffa3]">
+                        {c.source_id || c.artifact_id} ({c.locator})
+                      </td>
+                      <td className="py-2 px-3 font-mono tabular-nums text-right text-[#00ffa3]">
+                        {(c.confidence * 100).toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const renderArtifactsLegacySection = () => (
+    <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden bg-[#0c0d0f]">
+      {/* Artifact List (5 cols) */}
+      <div className="lg:col-span-5 border-r border-[#e4e6eb]/15 overflow-y-auto divide-y divide-[#e4e6eb]/10">
+        {artifacts.map((art) => {
+          const isSel = selectedArtifact?.id === art.id;
+          return (
+            <button
+              key={art.id}
+              type="button"
+              onClick={() => setSelectedArtifactId(art.id)}
+              className={`block w-full text-left p-3.5 transition-colors ${
+                isSel
+                  ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
+                  : "hover:bg-white/[0.02]"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-mono text-[#00ffa3]">
+                  {art.artifact_type} · v{art.version}
+                </span>
+                <span
+                  className={`text-[10px] font-mono uppercase ${
+                    art.status === "approved"
+                      ? "text-[#00ffa3]"
+                      : art.status === "in_review"
+                      ? "text-amber-400"
+                      : "text-[#e4e6eb]/50"
+                  }`}
+                >
+                  {art.status}
+                </span>
+              </div>
+              <div className="text-sm font-semibold text-white mt-1">
+                {art.title}
+              </div>
+              <p className="text-xs text-[#e4e6eb]/65 mt-1 line-clamp-2">
+                {art.summary}
+              </p>
+              <div className="mt-2 flex items-center gap-2 text-[10px] font-mono tabular-nums text-[#e4e6eb]/50">
+                <span>Studio: {art.studio_slug || "system"}</span>
+                <span aria-hidden="true">·</span>
+                <span>sha256:{art.content_hash.slice(0, 10)}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Selected Artifact Inspector (7 cols) */}
+      {selectedArtifact && (
+        <div className="lg:col-span-7 p-4 overflow-y-auto space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-[#e4e6eb]/15">
+            <div>
+              <div className="text-xs font-mono text-[#00ffa3]">
+                {selectedArtifact.storage_path}
+              </div>
+              <h3 className="text-base font-bold text-white mt-1">
+                {selectedArtifact.title}
+              </h3>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums text-[#e4e6eb]/60">
+                <span>Type: {selectedArtifact.artifact_type}</span>
+                <span aria-hidden="true">·</span>
+                <span>Status: {selectedArtifact.status}</span>
+                {selectedArtifact.approved_by && (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-[#00ffa3]">
+                      Approved by {selectedArtifact.approved_by}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {selectedArtifact.status !== "approved" ? (
+              <button
+                type="button"
+                onClick={() => handleApproveArtifact(selectedArtifact.id)}
+                className="px-3.5 py-1.5 rounded-[2px] bg-[#00ffa3] hover:brightness-110 text-black font-extrabold text-[11px] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <Check className="w-4 h-4" />
+                <span>Approve Artifact (Unlock Gate)</span>
+              </button>
+            ) : (
+              <span className="text-xs font-mono text-[#00ffa3] flex items-center gap-1">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Gate Verified</span>
+              </span>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-[#e4e6eb]/70">
+              Artifact Markdown Specification
+            </div>
+            <pre className="p-3.5 rounded-[4px] bg-black border border-[#e4e6eb]/15 text-xs font-mono text-[#88edff] whitespace-pre-wrap leading-relaxed">
+              {selectedArtifact.markdown_content}
+            </pre>
+          </div>
+
+          {selectedArtifact.body && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-mono uppercase tracking-wider text-[#e4e6eb]/70">
+                Structured JSON Payload (`artifacts.body`)
+              </div>
+              <pre className="p-3 rounded-[4px] bg-black border border-[#e4e6eb]/15 text-xs font-mono text-[#00ffa3] whitespace-pre-wrap">
+                {JSON.stringify(selectedArtifact.body, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderSchemaAndLogsLegacySection = () => (
+    <div className="flex-1 p-4 overflow-y-auto space-y-5 bg-[#0c0d0f]">
+      {/* Audit Findings */}
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-white">
+              Chief Librarian Health &amp; Drift Audit Findings (`audit_findings`)
+            </h3>
+            <p className="text-[11px] text-[#e4e6eb]/60">
+              Detects conflicting architecture, unapproved doctrines, orphan pages, and stale claims.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          {auditFindings.map((finding) => (
+            <div
+              key={finding.id}
+              className="p-3 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 space-y-1.5"
+            >
+              <div className="flex items-center justify-between text-[11px] font-mono">
+                <span className="text-amber-400">{finding.finding_type}</span>
+                <span
+                  className={
+                    finding.status === "resolved" ? "text-[#00ffa3]" : "text-amber-300"
+                  }
+                >
+                  {finding.status.toUpperCase()}
+                </span>
+              </div>
+              <div className="text-xs font-semibold text-white">
+                {finding.object_title}
+              </div>
+              <p className="text-[11px] text-[#e4e6eb]/80">
+                {finding.details.description}
+              </p>
+              <div className="text-[10px] font-mono text-[#00ffa3]">
+                Fix: {finding.details.recommended_fix}
+              </div>
+              {finding.status === "open" && (
+                <button
+                  type="button"
+                  onClick={() => void handleResolveAuditFinding(finding.id)}
+                  className="mt-1.5 px-2.5 py-1 rounded-[2px] bg-black border border-[#00ffa3] text-[10px] font-mono uppercase text-[#00ffa3]"
+                >
+                  Mark Resolved
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Cycle-Safe Graph Neighbors Explorer */}
+      <div className="p-3.5 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-xs font-semibold text-white">
+              PostgreSQL Recursive Graph Walk (`graph_neighbors(start_id, max_depth=2)`)
+            </h4>
+            <p className="text-[11px] text-[#e4e6eb]/60">
+              Cycle-safe bidirectional traversal over the `relationships` table.
+            </p>
+          </div>
+          <select
+            aria-label="Select Graph Walk Start Node"
+            value={neighborRootId}
+            onChange={(e) => setNeighborRootId(e.target.value)}
+            className="bg-black border border-[#e4e6eb]/20 rounded-[2px] px-2.5 py-1 text-xs text-[#00ffa3] font-mono"
+          >
+            <option value="proj-cortex-os">proj-cortex-os (CortexOS v1)</option>
+            <option value="art-librarian-prd">art-librarian-prd (Librarian PRD)</option>
+            <option value="proj-solar-crm">proj-solar-crm (Helios Solar CRM)</option>
+          </select>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {computedNeighbors.map((n, idx) => {
+            const objId =
+              "neighbor_id" in n
+                ? (n as { neighbor_id: string; neighbor_label?: string }).neighbor_label ||
+                  (n as { neighbor_id: string }).neighbor_id
+                : (n as { object_id: string }).object_id;
+            return (
+              <div
+                key={`${objId}-${idx}`}
+                className="px-2.5 py-1 rounded-[2px] bg-black border border-[#e4e6eb]/15 text-[11px] font-mono tabular-nums"
+              >
+                <span className="text-[#00ffa3]">{objId}</span>
+                <span className="text-[#e4e6eb]/40 mx-1.5">·</span>
+                <span className="text-[#e4e6eb]/80">depth={n.depth}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Transactional Outbox Events Table */}
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold text-white">
+          Transactional Event Outbox (`events` Table — `FOR UPDATE SKIP LOCKED`)
+        </h4>
+        <div className="border border-[#e4e6eb]/15 rounded-[2px] overflow-hidden">
+          <table className="w-full text-left border-collapse text-xs font-mono tabular-nums">
+            <thead>
+              <tr className="bg-black border-b border-[#e4e6eb]/15 text-[#e4e6eb]/60">
+                <th className="py-1.5 px-3">ID</th>
+                <th className="py-1.5 px-3">Event Type</th>
+                <th className="py-1.5 px-3">Idempotency Key</th>
+                <th className="py-1.5 px-3">Status</th>
+                <th className="py-1.5 px-3 text-right">Attempts</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#e4e6eb]/10">
+              {events.map((ev) => (
+                <tr key={ev.id} className="hover:bg-white/[0.02]">
+                  <td className="py-1.5 px-3 text-[#e4e6eb]/50">#{ev.id}</td>
+                  <td className="py-1.5 px-3 text-[#00ffa3]">{ev.event_type}</td>
+                  <td className="py-1.5 px-3 text-[#e4e6eb]">{ev.idempotency_key}</td>
+                  <td className="py-1.5 px-3 text-[#00ffa3]">{ev.status}</td>
+                  <td className="py-1.5 px-3 text-right text-[#e4e6eb]/70">
+                    {ev.attempts}/{ev.max_attempts}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderStudioWorkbenchLegacySection = (showAgentMeshSummary: boolean) => (
+    <div
+      aria-label="Studio Workbench and Activity Panel"
+      className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0c0d0f]"
+    >
+      {/* Workbench Header with Studio Selector */}
+      <div className="p-3.5 border-b border-[#e4e6eb]/15 bg-white/[0.02] space-y-2 shrink-0">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/55">
+            STUDIO WORKBENCH
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() =>
+                setRightPanelMode((m) => (m === "wide" ? "docked" : "wide"))
+              }
+              title="Resize Workbench Width"
+              aria-label="Resize Workbench Width"
+              className="p-1 rounded-[2px] bg-black border border-[#e4e6eb]/20 text-[#e4e6eb]/70 hover:text-white text-xs"
+            >
+              {rightPanelMode === "wide" ? (
+                <Minimize2 className="w-3 h-3" />
+              ) : (
+                <Maximize2 className="w-3 h-3" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setRightPanelMode((m) => (m === "detached" ? "docked" : "detached"))
+              }
+              className="px-2 py-0.5 rounded-[2px] bg-black border border-[#e4e6eb]/20 text-[10px] font-mono text-[#00ffa3] hover:text-white"
+            >
+              {rightPanelMode === "detached" ? "Dock" : "Detach"}
+            </button>
+          </div>
+        </div>
+
+        <label htmlFor="workbench-studio-select" className="sr-only">
+          Select Studio Environment
+        </label>
+        <select
+          id="workbench-studio-select"
+          aria-label="Select Studio Environment"
+          value={selectedStudio.slug}
+          onChange={(e) => {
+            setSelectedStudioSlug(e.target.value as StudioSlug);
+            setEditingPackContent(null);
+          }}
+          className="w-full p-2 rounded-[2px] bg-black border-[1.5px] border-[#00ffa3] text-xs font-mono font-bold text-white uppercase outline-none"
+        >
+          {studios.map((s, idx) => (
+            <option key={s.id} value={s.slug}>
+              {idx + 1}. {s.name} ({s.agent_name})
+            </option>
+          ))}
+        </select>
+
+        <div className="flex items-center justify-between text-[10px] font-mono text-[#e4e6eb]/50 tabular-nums">
+          <span>{selectedStudio.manifest_path}</span>
+          <span>sha256:{selectedStudio.manifest_hash.slice(0, 8)}</span>
+        </div>
+      </div>
+
+      {/* Studio Operating Environment Files + Live Agent & WorkRequest Activity */}
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
+        {showAgentMeshSummary && (
+          <div className="space-y-2 pb-3 border-b border-[#e4e6eb]/10">
+            <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.15em] text-[#00ffa3]">
+              <span>ACTIVE SPECIALIST TEAMMATES ({agents.length})</span>
+              <span>LIVE TELEMETRY</span>
+            </div>
+            <div className="grid grid-cols-1 gap-1.5">
+              {agents.slice(0, 4).map((ag) => (
+                <div
+                  key={ag.id}
+                  className="px-2.5 py-1.5 rounded-[2px] bg-black border border-white/10 flex items-center justify-between gap-2 text-[11px] font-mono"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        ag.status === "executing" || ag.status === "planning"
+                          ? "bg-[#00ffa3]"
+                          : ag.status === "blocked"
+                          ? "bg-rose-400"
+                          : "bg-slate-500"
+                      }`}
+                    />
+                    <span className="text-white font-semibold truncate">{ag.name}</span>
+                  </div>
+                  <span className="text-[10px] uppercase text-[#00ffa3] shrink-0">
+                    {ag.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* File Tabs inside Studio Pack */}
+        <div className="space-y-2">
+          <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
+            ACTIVE BUFFERS
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {(
+              [
+                ["agent_md", "AGENT.md"],
+                ["mission_md", "mission.md"],
+                ["rules_md", "rules.md"],
+                ["constraints_md", "constraints.md"],
+                ["knowledge_md", "knowledge.md"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setActivePackFile(key);
+                  setEditingPackContent(null);
+                }}
+                className={`px-2 py-1 rounded-[2px] text-[10px] font-mono transition-colors ${
+                  activePackFile === key
+                    ? "bg-[#00ffa3] text-black font-bold"
+                    : "bg-[#e4e6eb]/10 text-[#e4e6eb]/75 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {editingPackContent !== null ? (
+            <div className="space-y-2">
+              <textarea
+                rows={6}
+                aria-label="Edit Studio Pack Markdown"
+                value={editingPackContent}
+                onChange={(e) => setEditingPackContent(e.target.value)}
+                className="w-full p-2.5 rounded-[2px] bg-black border border-[#00ffa3] text-xs font-mono text-[#88edff] outline-none"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingPackContent(null)}
+                  className="px-2.5 py-1 text-xs font-mono text-[#e4e6eb]/60 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveStudioPackFile}
+                  className="px-3 py-1 rounded-[2px] bg-[#00ffa3] text-black font-extrabold text-[10px] uppercase"
+                >
+                  Save to Studio Pack
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="relative group">
+              <pre className="p-3 rounded-[4px] bg-black border border-[#00ffa3]/60 text-[10px] font-mono text-[#88edff] whitespace-pre-wrap leading-relaxed">
+                {selectedStudio.pack[activePackFile]}
+              </pre>
+              <button
+                type="button"
+                onClick={() =>
+                  setEditingPackContent(selectedStudio.pack[activePackFile])
+                }
+                className="mt-1.5 text-[10px] font-mono text-[#00ffa3] hover:underline"
+              >
+                Edit {activePackFile.replace("_md", ".md")}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Studio Skills & Playbooks */}
+        <div className="space-y-2 pt-2.5 border-t border-[#e4e6eb]/10">
+          <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
+            PLAYBOOKS
+          </div>
+          <div className="space-y-1.5">
+            {selectedStudio.pack.skills.map((sk) => (
+              <div
+                key={sk.name}
+                className="p-2.5 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15"
+              >
+                <div className="text-[10px] font-mono text-[#00ffa3]">
+                  skills/{sk.name}
+                </div>
+                <p className="text-[11px] text-[#e4e6eb]/75 mt-0.5">
+                  {sk.content.replace(/^#.*\n/, "")}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Quality Gates */}
+        <div className="space-y-1.5 pt-2.5 border-t border-[#e4e6eb]/10">
+          <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
+            QUALITY GATES
+          </div>
+          <ul className="space-y-1 text-[11px] text-[#e4e6eb]/85 font-mono">
+            {selectedStudio.quality_checks.map((qc) => (
+              <li key={qc} className="flex items-start gap-2">
+                <span className="text-[#00ffa3] shrink-0">[✓]</span>
+                <span>{qc}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Live WorkRequest Activity Feed */}
+        <div className="space-y-2 pt-2.5 border-t border-[#e4e6eb]/10">
+          <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
+            LIVE WORKREQUEST QUEUE
+          </div>
+          <div className="space-y-1.5">
+            {workRequests.map((wr) => (
+              <div
+                key={wr.id}
+                className="p-2.5 rounded-[2px] bg-black border border-[#e4e6eb]/15 text-xs space-y-1"
+              >
+                <div className="flex items-center justify-between font-mono text-[10px]">
+                  <span className="text-[#00ffa3] uppercase">{wr.studio_slug}</span>
+                  <span
+                    className={
+                      wr.status === "done"
+                        ? "text-[#00ffa3]"
+                        : wr.status === "running"
+                        ? "text-[#88edff]"
+                        : "text-amber-400"
+                    }
+                  >
+                    {wr.status.toUpperCase()}
+                  </span>
+                </div>
+                <p className="text-[#e4e6eb]/85 text-[11px] line-clamp-2">{wr.objective}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderLegacyAdaptedPanel = (panelId: WarRoomPanelId): React.ReactNode => {
+    switch (panelId) {
+      case "context":
+        return (
+          <div
+            data-testid="war-room-panel-context"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0c0d0f]"
+          >
+            {/* Sub-mode switcher between Raw Sources (01) and LLM Wiki (02) */}
+            <div className="shrink-0 px-3 py-1.5 bg-black border-b border-[#e4e6eb]/15 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setContextSubTab("sources")}
+                  className={`px-2 py-0.5 rounded-[2px] text-[10px] font-mono uppercase tracking-wider ${
+                    contextSubTab === "sources"
+                      ? "bg-[#00ffa3] text-black font-bold"
+                      : "text-[#e4e6eb]/70 hover:text-white"
+                  }`}
+                >
+                  Raw Sources ({sources.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContextSubTab("wiki")}
+                  className={`px-2 py-0.5 rounded-[2px] text-[10px] font-mono uppercase tracking-wider ${
+                    contextSubTab === "wiki"
+                      ? "bg-[#00ffa3] text-black font-bold"
+                      : "text-[#e4e6eb]/70 hover:text-white"
+                  }`}
+                >
+                  LLM Wiki &amp; Claims ({wikiPages.length})
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={onSwitchToBrainMode}
+                className="text-[10px] font-mono text-[#00ffa3] hover:underline flex items-center gap-1"
+              >
+                <span>MainBrain</span>
+                <ExternalLink className="w-2.5 h-2.5" />
+              </button>
+            </div>
+            {contextSubTab === "wiki"
+              ? renderWikiLegacySection()
+              : renderSourcesLegacySection()}
+          </div>
+        );
+
+      case "chat":
+        return (
+          <section
+            aria-label="Mission Control and Agent Council"
+            data-testid="war-room-panel-chat"
+            className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0c0d0f] overflow-hidden"
+          >
+            {/* Center Panel Mode Tabs (Synchronized with 4-Zone Panels) */}
+            <div className="shrink-0 px-4 py-2.5 border-b border-[#e4e6eb]/15 bg-white/[0.02] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1 p-0.5 bg-black border border-[#e4e6eb]/15 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setCenterTab("council")}
+                  className={`px-2.5 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
+                    centerTab === "council"
+                      ? "bg-[#00ffa3] text-black font-bold"
+                      : "text-[#e4e6eb]/70 hover:text-white"
+                  }`}
+                >
+                  Agent Council ({projectMessages.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCenterTab("artifacts")}
+                  className={`px-2.5 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
+                    centerTab === "artifacts"
+                      ? "bg-[#00ffa3] text-black font-bold"
+                      : "text-[#e4e6eb]/70 hover:text-white"
+                  }`}
+                >
+                  Artifacts &amp; Gates ({projectArtifacts.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCenterTab("wiki")}
+                  className={`px-2.5 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
+                    centerTab === "wiki"
+                      ? "bg-[#00ffa3] text-black font-bold"
+                      : "text-[#e4e6eb]/70 hover:text-white"
+                  }`}
+                >
+                  LLM Wiki &amp; Claims ({wikiPages.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCenterTab("schema")}
+                  className={`px-2.5 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
+                    centerTab === "schema"
+                      ? "bg-[#00ffa3] text-black font-bold"
+                      : "text-[#e4e6eb]/70 hover:text-white"
+                  }`}
+                >
+                  Schema &amp; Audit ({auditFindings.filter((f) => f.status === "open").length})
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={onSwitchToBrainMode}
+                className="px-3 py-1 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase tracking-wider text-[#00ffa3] flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <span>Inspect in 3D Brain</span>
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            </div>
+
+            {centerTab === "council" && (
+              <div className="flex-1 flex flex-col min-h-0">
+                {/* Pinned Jarvis Executive Summary Card */}
+                <div className="shrink-0 mx-4 mt-3 p-3 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2 text-[10px] text-[#00ffa3] font-mono uppercase tracking-wider">
+                      <span>JARVIS SUPERVISOR · EXECUTIVE SUMMARY</span>
+                      <span aria-hidden="true">·</span>
+                      <span>PHASE: {activeProject.current_phase.toUpperCase()}</span>
+                    </div>
+                    <p className="text-xs text-[#e4e6eb]/80">
+                      {activeProject.description}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 text-[11px] font-mono tabular-nums text-[#e4e6eb]/60 shrink-0">
+                    <span>
+                      Approved Gates:{" "}
+                      <strong className="text-[#00ffa3]">
+                        {projectArtifacts.filter((a) => a.status === "approved").length}/
+                        {projectArtifacts.length}
+                      </strong>
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span>
+                      ADRs: <strong className="text-white">{projectDecisions.length}</strong>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Council Stream */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+                  {projectMessages.map((msg) => {
+                    const isJarvis = msg.speaker_role === "jarvis";
+                    const isLibrarian = msg.speaker_role === "librarian";
+                    const isUser = msg.speaker_role === "user";
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`p-3.5 rounded-[2px] border ${
+                          isJarvis
+                            ? "bg-[#003322]/65 border-[#00ffa3]/60"
+                            : isLibrarian
+                            ? "bg-[#9d00ff]/[0.06] border-[#9d00ff]/50"
+                            : isUser
+                            ? "bg-black border-[#e4e6eb]/25"
+                            : "bg-white/[0.02] border-[#e4e6eb]/15"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-1.5">
+                          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider">
+                            <span
+                              className={`font-bold ${
+                                isJarvis
+                                  ? "text-[#00ffa3]"
+                                  : isLibrarian
+                                  ? "text-[#c084fc]"
+                                  : "text-[#e4e6eb]"
+                              }`}
+                            >
+                              {msg.speaker_name}
+                            </span>
+                            {msg.studio_name && (
+                              <>
+                                <span className="text-[#e4e6eb]/30" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-[#00ffa3]">{msg.studio_name}</span>
+                              </>
+                            )}
+                            {isJarvis && (
+                              <>
+                                <span className="text-[#e4e6eb]/30" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-[#00ffa3]">Governor &amp; Router</span>
+                              </>
+                            )}
+                            {isLibrarian && (
+                              <>
+                                <span className="text-[#e4e6eb]/30" aria-hidden="true">
+                                  ·
+                                </span>
+                                <span className="text-[#c084fc]">Memory OS Gate</span>
+                              </>
+                            )}
+                          </div>
+                          <span className="text-[10px] font-mono tabular-nums text-[#e4e6eb]/50">
+                            {msg.timestamp}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-[#e4e6eb] leading-relaxed">
+                          {renderFormattedText(msg.content)}
+                        </p>
+
+                        {(msg.artifacts_produced?.length ||
+                          msg.decisions_logged?.length ||
+                          msg.wiki_ripples?.length) && (
+                          <div className="mt-2.5 pt-2 border-t border-[#e4e6eb]/15 flex flex-wrap items-center gap-3 text-[10px] font-mono text-[#e4e6eb]/60">
+                            {msg.artifacts_produced?.map((art) => (
+                              <button
+                                key={art}
+                                type="button"
+                                onClick={() => setCenterTab("artifacts")}
+                                className="text-[#00ffa3] hover:underline flex items-center gap-1"
+                              >
+                                <FileCheck2 className="w-3.5 h-3.5" />
+                                <span>[VIEW_ARTIFACT: {art}]</span>
+                              </button>
+                            ))}
+                            {msg.decisions_logged?.map((dec) => (
+                              <span key={dec} className="text-amber-300">
+                                Decision: {dec}
+                              </span>
+                            ))}
+                            {msg.wiki_ripples?.map((wp) => (
+                              <button
+                                key={wp}
+                                type="button"
+                                onClick={() => setCenterTab("wiki")}
+                                className="text-[#c084fc] hover:underline"
+                              >
+                                Wiki Ripple: {wp}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Jarvis Supervisor Command Input Bar */}
+                <form
+                  onSubmit={handleRunJarvisOrchestration}
+                  className="shrink-0 p-3.5 bg-[#0c0d0f] border-t-[1.5px] border-[#e4e6eb] space-y-2.5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="jarvis-studio-target"
+                        className="text-[10px] font-mono uppercase tracking-[0.14em] text-[#e4e6eb]/55"
+                      >
+                        Target Studio:
+                      </label>
+                      <select
+                        id="jarvis-studio-target"
+                        value={targetStudioOverride}
+                        onChange={(e) =>
+                          setTargetStudioOverride(e.target.value as "auto" | StudioSlug)
+                        }
+                        className="bg-black border border-[#e4e6eb]/20 rounded-[2px] px-2.5 py-1 text-[11px] font-mono text-[#00ffa3] outline-none focus:border-[#00ffa3]"
+                      >
+                        <option value="auto">
+                          AUTO ({activeProject.current_phase.toUpperCase()})
+                        </option>
+                        {studios.map((s) => (
+                          <option key={s.slug} value={s.slug}>
+                            {s.name} ({s.agent_name})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Quick Directives */}
+                    <div className="flex items-center gap-1.5 overflow-x-auto">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setJarvisDirective(
+                            "Generate OpenAPI 3.1 contract for /librarian/ingest and /brain/search endpoints"
+                          )
+                        }
+                        className="px-2 py-0.5 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase text-[#e4e6eb] whitespace-nowrap"
+                      >
+                        + OpenAPI
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setJarvisDirective(
+                            "Design NEM 3.0 solar + battery payback comparison UI component contract"
+                          )
+                        }
+                        className="px-2 py-0.5 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase text-[#e4e6eb] whitespace-nowrap"
+                      >
+                        + Design Spec
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setJarvisDirective(
+                            "Run SOC2 prompt-injection boundary & provenance claim audit"
+                          )
+                        }
+                        className="px-2 py-0.5 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase text-[#e4e6eb] whitespace-nowrap"
+                      >
+                        + QA Gate
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <input
+                      type="text"
+                      aria-label="Command Jarvis Supervisor"
+                      placeholder="CMD: System instruction (e.g., 'Design the satellite roof array wireframe spec')..."
+                      value={jarvisDirective}
+                      onChange={(e) => setJarvisDirective(e.target.value)}
+                      className="flex-1 p-2.5 rounded-[4px] bg-[#111] border-[1.5px] border-[#e4e6eb] text-xs font-mono text-white placeholder-[#e4e6eb]/40 outline-none focus:border-[#00ffa3]"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isOrchestrating}
+                      className="px-5 py-2.5 rounded-[2px] bg-[#00ffa3] hover:brightness-110 disabled:opacity-50 text-black font-extrabold text-[11px] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{isOrchestrating ? "Orchestrating..." : "Dispatch"}</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {centerTab === "artifacts" && renderArtifactsLegacySection()}
+            {centerTab === "wiki" && renderWikiLegacySection()}
+            {centerTab === "schema" && renderSchemaAndLogsLegacySection()}
+          </section>
+        );
+
+      case "artifacts":
+        return (
+          <div
+            data-testid="war-room-panel-artifacts"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0c0d0f]"
+          >
+            {renderArtifactsLegacySection()}
+          </div>
+        );
+
+      case "logs":
+        return (
+          <div
+            data-testid="war-room-panel-logs"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0c0d0f]"
+          >
+            {renderSchemaAndLogsLegacySection()}
+          </div>
+        );
+
+      case "sandbox":
+        return (
+          <div
+            data-testid="war-room-panel-sandbox"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0c0d0f]"
+          >
+            {renderStudioWorkbenchLegacySection(false)}
+          </div>
+        );
+
+      case "activity":
+        return (
+          <div
+            data-testid="war-room-panel-activity"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#0c0d0f]"
+          >
+            {renderStudioWorkbenchLegacySection(true)}
+          </div>
+        );
+
+      case "tasks":
+        return (
+          <div
+            data-testid="war-room-panel-tasks"
+            className="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 space-y-4 bg-[#0c0d0f]"
+          >
+            <div className="flex items-center justify-between border-b border-[#e4e6eb]/15 pb-2.5">
+              <div>
+                <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-[#00ffa3]">
+                  06. Mission Tasks, Approval Gates &amp; WorkRequest Queue
+                </h3>
+                <p className="text-[11px] font-mono text-[#e4e6eb]/60 mt-0.5">
+                  Active Phase: {activeProject.current_phase.toUpperCase()} · {workRequests.length} WorkRequests · {pendingApprovals.length} Pending Approvals
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => activateWarRoomPanel("artifacts")}
+                className="px-2.5 py-1 rounded-[2px] bg-black border border-[#00ffa3]/50 text-[10px] font-mono uppercase text-[#00ffa3] hover:bg-[#003322]"
+              >
+                Open Gate Artifacts
+              </button>
+            </div>
+
+            {/* Pending Approval Gates */}
+            {pendingApprovals.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300">
+                  PENDING HUMAN-IN-THE-LOOP APPROVAL GATES ({pendingApprovals.length})
+                </div>
+                {pendingApprovals.map((appr) => (
+                  <div
+                    key={appr.id}
+                    className="p-3 rounded-[2px] bg-amber-950/30 border border-amber-500/40 flex items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="text-xs font-mono font-bold text-amber-200">
+                        {appr.title}
+                      </div>
+                      <div className="text-[11px] font-mono text-amber-300/75 mt-0.5">
+                        Requested by {appr.requestedBy} · {appr.reason}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void submitApprovalDecision({
+                          approvalId: appr.id,
+                          workflowId: appr.workflowId,
+                          approved: true,
+                        })
+                      }
+                      className="px-3 py-1 rounded-[2px] bg-[#00ffa3] text-black font-mono font-bold text-[10px] uppercase shrink-0"
+                    >
+                      Approve Gate
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Active Runtime Workflows */}
+            <div className="space-y-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb]/60">
+                TEMPORAL / RUNTIME WORKFLOW PIPELINES ({workflows.length})
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {workflows.map((wf) => (
+                  <div
+                    key={wf.id}
+                    className="p-3 rounded-[2px] bg-black border border-[#e4e6eb]/15 flex items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="text-xs font-mono font-bold text-white">
+                        {wf.workflowType}
+                      </div>
+                      <div className="text-[11px] font-mono text-[#e4e6eb]/65 mt-0.5">
+                        Step: {wf.currentStep} · Project: {wf.projectId}
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-[2px] bg-[#003322] border border-[#00ffa3]/40 text-[10px] font-mono uppercase text-[#00ffa3]">
+                      {wf.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* PostgreSQL WorkRequest Queue */}
+            <div className="space-y-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb]/60">
+                POSTGRESQL WORKREQUEST QUEUE ({workRequests.length})
+              </div>
+              <div className="space-y-2">
+                {workRequests.map((wr) => (
+                  <div
+                    key={wr.id}
+                    className="p-3 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 space-y-1"
+                  >
+                    <div className="flex items-center justify-between font-mono text-[10px]">
+                      <span className="text-[#00ffa3] uppercase">
+                        Studio: {wr.studio_slug}
+                      </span>
+                      <span className="text-amber-300 uppercase">{wr.status}</span>
+                    </div>
+                    <p className="text-xs text-white">{wr.objective}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+
+      case "terminal":
+        return (
+          <div
+            data-testid="war-room-panel-terminal"
+            className="flex-1 flex flex-col min-h-0 overflow-hidden bg-[#050608] font-mono"
+          >
+            {/* Quick Operator Command Strip */}
+            <div className="shrink-0 px-3 py-1.5 bg-[#0c0f16] border-b border-white/10 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 overflow-x-auto">
+                <span className="text-[10px] uppercase tracking-wider text-[#00ffa3] font-bold flex items-center gap-1">
+                  <Terminal className="w-3 h-3" />
+                  <span>CORTEX CLI</span>
+                </span>
+                {(["/status", "/verify", "/gate", "/deploy", "pytest -q"] as const).map(
+                  (cmd) => (
+                    <button
+                      key={cmd}
+                      type="button"
+                      onClick={() => void runTerminalCommand(cmd)}
+                      className="px-2 py-0.5 rounded-[2px] bg-black border border-white/15 hover:border-[#00ffa3] text-[10px] text-[#e4e6eb] hover:text-[#00ffa3] whitespace-nowrap"
+                    >
+                      {cmd}
+                    </button>
+                  )
+                )}
+              </div>
+              <span className="text-[10px] text-slate-400 shrink-0">
+                {isExecutingCommand ? "RUNNING..." : `${terminalHistory.length} traces`}
+              </span>
+            </div>
+
+            {/* Terminal Output Stream */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 text-[11px]">
+              {terminalHistory.slice(0, 8).map((entry) => (
+                <div
+                  key={entry.id}
+                  className="p-2.5 rounded-[2px] bg-[#0b0e14] border border-white/10 space-y-1"
+                >
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-[#00ffa3] font-bold">$ {entry.command}</span>
+                    <span className="text-slate-400">
+                      {entry.targetAgentId} · {entry.model} · {entry.timestamp}
+                    </span>
+                  </div>
+                  <div className="text-slate-200">{entry.outputSummary}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Terminal Command Input */}
+            <form
+              onSubmit={handleRunInlineTerminalCommand}
+              className="shrink-0 px-3 py-2 bg-[#0b0e14] border-t border-white/15 flex items-center gap-2"
+            >
+              <span className="text-xs font-bold text-[#00ffa3]">$</span>
+              <input
+                type="text"
+                aria-label="War Room Terminal Command Input"
+                placeholder="Execute terminal command (/status, /verify, /gate, pytest -q)..."
+                value={terminalCmdInput}
+                onChange={(e) => setTerminalCmdInput(e.target.value)}
+                className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 outline-none"
+              />
+              <button
+                type="submit"
+                disabled={isExecutingCommand}
+                className="px-3 py-1 rounded-[2px] bg-[#00ffa3] text-black font-bold text-[10px] uppercase tracking-wider"
+              >
+                Run
+              </button>
+            </form>
+          </div>
+        );
+
+      case "harness":
+        return (
+          <div
+            data-testid="war-room-panel-harness"
+            className="flex-1 flex flex-col min-h-0 overflow-y-auto p-3.5 space-y-3 bg-[#0c0d0f] font-mono"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#00ffa3] flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5" />
+                  <span>04. Provider Abstraction Harness</span>
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Zero Vendor Lock-In · Cloud + Local Model Routing
+                </p>
+              </div>
+              <span className="px-2 py-0.5 rounded-[2px] bg-black border border-[#00ffa3]/40 text-[10px] text-[#00ffa3]">
+                Est. Cost: ${goldenRuleTelemetry.estimatedSessionCostUsd.toFixed(4)}
+              </span>
+            </div>
+
+            {/* Provider Selector Grid */}
+            <div className="grid grid-cols-1 gap-2">
+              {PROVIDERS_CATALOG.map((prov) => {
+                const isSelected = prov.id === selectedProvider;
+                return (
+                  <div
+                    key={prov.id}
+                    className={`p-2.5 rounded-[2px] border transition-colors ${
+                      isSelected
+                        ? "bg-[#003322]/50 border-[#00ffa3]"
+                        : "bg-black border-white/10"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedProvider(prov.id as ProviderId);
+                          setSelectedModel(prov.defaultModel);
+                        }}
+                        className="text-left flex items-center gap-2"
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            isSelected ? "bg-[#00ffa3]" : "bg-slate-600"
+                          }`}
+                        />
+                        <span className="text-xs font-bold text-white">{prov.name}</span>
+                        <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-white/5 text-slate-300">
+                          {prov.locality}
+                        </span>
+                      </button>
+                      {!isSelected && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void triggerProviderFailover(selectedProvider, prov.id)
+                          }
+                          className="px-2 py-0.5 rounded-[2px] bg-[#141923] border border-white/15 hover:border-[#00ffa3] text-[9px] uppercase text-[#00ffa3]"
+                        >
+                          Failover Here
+                        </button>
+                      )}
+                    </div>
+
+                    {isSelected && (
+                      <div className="mt-2 pt-2 border-t border-white/10 flex flex-wrap items-center gap-1.5">
+                        {prov.models.map((mdl) => (
+                          <button
+                            key={mdl}
+                            type="button"
+                            onClick={() => setSelectedModel(mdl)}
+                            className={`px-2 py-0.5 rounded-[2px] text-[10px] ${
+                              selectedModel === mdl
+                                ? "bg-[#00ffa3] text-black font-bold"
+                                : "bg-black border border-white/15 text-slate-300 hover:text-white"
+                            }`}
+                          >
+                            {mdl}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Recent Tool Calls */}
+            <div className="space-y-1.5 pt-2 border-t border-white/10">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                RECENT HARNESS TOOL INVOCATIONS ({toolActivityFeed.length})
+              </div>
+              {toolActivityFeed.slice(0, 4).map((tool) => (
+                <div
+                  key={tool.id}
+                  className="px-2.5 py-1.5 rounded-[2px] bg-black border border-white/10 flex items-center justify-between text-[10px]"
+                >
+                  <span className="text-cyan-300 truncate">{tool.toolName}</span>
+                  <span className="text-slate-400 shrink-0">{tool.executionTimeMs}ms</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+    }
+  };
 
   return (
     <div className="flex flex-col w-full h-full bg-[#0c0d0f] text-[#e4e6eb] overflow-hidden">
@@ -960,10 +2544,11 @@ export default function WarRoom({
           setUnlockPromptReason(null);
           setIsUnlockModalOpen(true);
         }}
-        rightPanelCollapsed={rightPanelMode === "collapsed"}
-        onToggleRightPanel={() =>
-          setRightPanelMode((m) => (m === "collapsed" ? "docked" : "collapsed"))
-        }
+        rightPanelCollapsed={warRoomLayout.zones.right.collapsed}
+        onToggleRightPanel={() => {
+          toggleWarRoomZoneCollapsed("right");
+          setRightPanelMode((m) => (m === "collapsed" ? "docked" : "collapsed"));
+        }}
         onLegacyPanelBridge={handleLegacyPanelBridge}
         onExecuteNextStep={handleExecuteNextStep}
       />
@@ -1129,1159 +2714,10 @@ export default function WarRoom({
       )}
 
       {/* ==================================================================== */}
-      {/* THREE-COLUMN WAR ROOM WORKSPACE (320px · 1fr · 320px)                */}
+      {/* STEP 4: DETERMINISTIC 4-ZONE WORKBENCH SHELL                         */}
       {/* ==================================================================== */}
-      <div className="flex-1 flex min-h-0 overflow-hidden relative">
-        {/* ------------------------------------------------------------------ */}
-        {/* LEFT PANEL: [01] RESEARCH SOURCES                                  */}
-        {/* ------------------------------------------------------------------ */}
-        <aside
-          aria-label="Research and Sources Panel"
-          className="w-80 shrink-0 border-r border-[#e4e6eb]/15 bg-[#0c0d0f] flex flex-col min-h-0"
-        >
-          <div className="p-4 border-b border-[#e4e6eb]/15 bg-white/[0.02] space-y-3">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-[#e4e6eb]">
-                  01. Research Sources
-                </h2>
-                <p className="text-[10px] font-mono text-[#e4e6eb]/50 mt-0.5">
-                  Immutable Layer 1 (`brain/raw/`) · Chief Librarian
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAddingSource(!isAddingSource)}
-                className="px-3 py-1.5 rounded-[2px] bg-transparent border border-[#00ffa3] text-[#00ffa3] hover:bg-[#003322] font-mono font-bold text-[10px] uppercase tracking-wider flex items-center gap-1 whitespace-nowrap shrink-0"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Add Source</span>
-              </button>
-            </div>
-
-            {/* Search & Trust Filter */}
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="w-3.5 h-3.5 text-[#e4e6eb]/40 absolute left-2.5 top-2" />
-                <input
-                  type="text"
-                  aria-label="Search Knowledge Sources"
-                  placeholder="SEARCH HASHES..."
-                  value={sourceSearch}
-                  onChange={(e) => setSourceSearch(e.target.value)}
-                  className="w-full pl-8 pr-2.5 py-1.5 rounded-[2px] bg-black border border-[#e4e6eb]/15 font-mono text-[11px] text-[#00ffa3] placeholder-[#e4e6eb]/35 outline-none focus:border-[#00ffa3]"
-                />
-              </div>
-              <select
-                aria-label="Filter Source Trust Level"
-                value={trustFilter}
-                onChange={(e) => setTrustFilter(e.target.value as "all" | TrustLevel)}
-                className="bg-black border border-[#e4e6eb]/15 rounded-[2px] px-2 py-1.5 font-mono text-[10px] uppercase text-[#e4e6eb]/80 outline-none focus:border-[#00ffa3]"
-              >
-                <option value="all">All Trust</option>
-                <option value="trusted">Trusted</option>
-                <option value="untrusted">Untrusted</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Add & Ingest Source Form */}
-          {isAddingSource && (
-            <form
-              onSubmit={handleIngestSource}
-              className="p-4 border-b border-[#e4e6eb]/15 bg-black space-y-2.5"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[#00ffa3]">
-                  Ingest Source via Chief Librarian
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingSource(false)}
-                  className="text-xs font-mono text-[#e4e6eb]/50 hover:text-white"
-                >
-                  Close
-                </button>
-              </div>
-              <input
-                type="text"
-                aria-label="New Source Title"
-                placeholder="Source Title (e.g. Q4 Enterprise Security Requirements)"
-                value={newSourceTitle}
-                onChange={(e) => setNewSourceTitle(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-white outline-none focus:border-[#00ffa3]"
-              />
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  aria-label="New Source Kind"
-                  value={newSourceKind}
-                  onChange={(e) => setNewSourceKind(e.target.value as SourceKind)}
-                  className="px-2 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-[#e4e6eb] outline-none"
-                >
-                  <option value="markdown">Markdown Note</option>
-                  <option value="url">Web URL</option>
-                  <option value="pdf">PDF Document</option>
-                  <option value="repo">GitHub Repo</option>
-                  <option value="transcript">Meeting Transcript</option>
-                </select>
-                <select
-                  aria-label="New Source Trust Level"
-                  value={newSourceTrust}
-                  onChange={(e) => setNewSourceTrust(e.target.value as TrustLevel)}
-                  className="px-2 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-[#e4e6eb] outline-none"
-                >
-                  <option value="untrusted">Untrusted (Data Only)</option>
-                  <option value="trusted">Trusted</option>
-                </select>
-              </div>
-              <input
-                type="text"
-                aria-label="Source URI or Path"
-                placeholder="Optional URL or GitHub Repo URI"
-                value={newSourceUri}
-                onChange={(e) => setNewSourceUri(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs font-mono text-white outline-none focus:border-[#00ffa3]"
-              />
-              <textarea
-                rows={4}
-                aria-label="Raw Source Content"
-                placeholder="Paste raw markdown, research findings, or transcript text. Chief Librarian will compute SHA-256, extract Entities/Concepts with verbatim quotes, and ripple into the LLM Wiki..."
-                value={newSourceContent}
-                onChange={(e) => setNewSourceContent(e.target.value)}
-                className="w-full p-2.5 rounded-[2px] bg-[#0c0d0f] border border-[#e4e6eb]/20 text-xs text-[#e4e6eb] outline-none focus:border-[#00ffa3] font-mono"
-              />
-              <button
-                type="submit"
-                disabled={isIngestingSource}
-                className="w-full py-2 rounded-[2px] bg-[#00ffa3] hover:brightness-110 disabled:opacity-50 text-black font-extrabold text-[11px] uppercase tracking-wider transition-all"
-              >
-                {isIngestingSource
-                  ? "Chief Librarian Extracting & Rippling..."
-                  : "Ingest & Ripple into Brain"}
-              </button>
-            </form>
-          )}
-
-          {/* Sources List (Vertical Stack) or Real Hybrid Search Results */}
-          <div className="flex-1 overflow-y-auto divide-y divide-[#e4e6eb]/10 [scrollbar-width:thin] [scrollbar-color:rgba(228,230,235,0.2)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#e4e6eb]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#00ffa3]/60">
-            {sourceSearch.trim() && searchResults !== null ? (
-              <div>
-                <div className="px-5 py-2.5 bg-[#003322]/40 border-b border-[#00ffa3]/20 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-[#00ffa3]">
-                  <span>
-                    {isSearching ? "Searching..." : `Search · ${searchResults.length} Results`}
-                  </span>
-                  <span>RRF + Vector + FTS</span>
-                </div>
-                {searchResults.length === 0 ? (
-                  <div className="p-5 text-center text-xs font-mono text-[#e4e6eb]/50">
-                    No hybrid search matches for &quot;{sourceSearch}&quot;
-                  </div>
-                ) : (
-                  searchResults.map((hit, idx) => {
-                    const isSelected =
-                      selectedSource?.id === hit.source_id ||
-                      selectedSource?.id === hit.object_id;
-                    return (
-                      <button
-                        key={`${hit.object_id}-${hit.chunk_index ?? idx}`}
-                        type="button"
-                        onClick={() => {
-                          const targetSrc =
-                            sources.find((s) => s.id === hit.source_id) ||
-                            sources.find((s) => s.id === hit.object_id);
-                          if (targetSrc) {
-                            setSelectedSourceId(targetSrc.id);
-                          }
-                        }}
-                        className={`block w-full text-left px-5 py-3 transition-colors ${
-                          isSelected
-                            ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
-                            : "hover:bg-white/[0.03]"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
-                            {hit.title}
-                          </div>
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black border border-[#00ffa3]/40 text-[#00ffa3] shrink-0">
-                            RRF: {hit.rrf_score.toFixed(4)}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] font-mono text-[#e4e6eb]/60 line-clamp-2 leading-relaxed">
-                          {hit.snippet}
-                        </div>
-                        <div className="mt-1.5 flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
-                          <span className="text-[#00ffa3]">
-                            {hit.object_type}
-                          </span>
-                          <span aria-hidden="true">·</span>
-                          <span>Cosine: {(hit.cosine_similarity * 100).toFixed(0)}%</span>
-                          {hit.citations.length > 0 && (
-                            <>
-                              <span aria-hidden="true">·</span>
-                              <span className="text-amber-400">
-                                {hit.citations.length} Citation{hit.citations.length > 1 ? "s" : ""}
-                              </span>
-                            </>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            ) : (
-              filteredSources.map((src) => {
-                const isSelected = selectedSource?.id === src.id;
-                return (
-                  <button
-                    key={src.id}
-                    type="button"
-                    onClick={() => setSelectedSourceId(src.id)}
-                    className={`block w-full text-left px-5 py-3 transition-colors ${
-                      isSelected
-                        ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
-                        : "hover:bg-white/[0.03]"
-                    }`}
-                  >
-                    <div className="text-xs font-mono font-bold text-[#e4e6eb] line-clamp-1">
-                      {src.title}
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-[#e4e6eb]/50 tabular-nums">
-                      <span
-                        className={
-                          src.trust === "trusted" ? "text-[#00ffa3]" : "text-amber-400"
-                        }
-                      >
-                        {src.trust}
-                      </span>
-                      <span aria-hidden="true">·</span>
-                      <span>{src.kind}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{src.content_hash.slice(0, 8)}</span>
-                    </div>
-                  </button>
-                );
-              })
-            )}
-          </div>
-
-          {/* Selected Source Immutable Inspector Footer */}
-          {selectedSource && (
-            <div className="p-4 border-t border-[#e4e6eb]/15 bg-black space-y-2 shrink-0 [scrollbar-width:thin] [scrollbar-color:rgba(228,230,235,0.2)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#e4e6eb]/20">
-              <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.12em] text-[#e4e6eb]/50">
-                <span className="truncate">{selectedSource.storage_path}</span>
-                <span className="text-[#00ffa3] shrink-0">{selectedSource.ingest_status}</span>
-              </div>
-              <pre className="h-36 overflow-y-auto text-[10px] text-[#88edff] font-mono whitespace-pre-wrap leading-relaxed bg-[#050608] p-3 rounded-[4px] border border-[#e4e6eb]/15 [scrollbar-width:thin] [scrollbar-color:rgba(228,230,235,0.2)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#e4e6eb]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#00ffa3]/60">
-                {selectedSource.raw_content}
-              </pre>
-            </div>
-          )}
-        </aside>
-
-        {/* ------------------------------------------------------------------ */}
-        {/* CENTER PANEL: MISSION CONTROL & AGENT COUNCIL                      */}
-        {/* ------------------------------------------------------------------ */}
-        <section
-          aria-label="Mission Control and Agent Council"
-          className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0c0d0f] border-r border-[#e4e6eb]/15"
-        >
-          {/* Center Panel Mode Tabs */}
-          <div className="shrink-0 px-5 py-3 border-b border-[#e4e6eb]/15 bg-white/[0.02] flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 p-0.5 bg-black border border-[#e4e6eb]/15">
-              <button
-                type="button"
-                onClick={() => setCenterTab("council")}
-                className={`px-3 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
-                  centerTab === "council"
-                    ? "bg-[#00ffa3] text-black font-bold"
-                    : "text-[#e4e6eb]/70 hover:text-white"
-                }`}
-              >
-                Agent Council ({projectMessages.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setCenterTab("artifacts")}
-                className={`px-3 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
-                  centerTab === "artifacts"
-                    ? "bg-[#00ffa3] text-black font-bold"
-                    : "text-[#e4e6eb]/70 hover:text-white"
-                }`}
-              >
-                Artifacts &amp; Gates ({projectArtifacts.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setCenterTab("wiki")}
-                className={`px-3 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
-                  centerTab === "wiki"
-                    ? "bg-[#00ffa3] text-black font-bold"
-                    : "text-[#e4e6eb]/70 hover:text-white"
-                }`}
-              >
-                LLM Wiki &amp; Claims ({wikiPages.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setCenterTab("schema")}
-                className={`px-3 py-1 rounded-[2px] text-[10px] font-mono uppercase tracking-wider transition-colors whitespace-nowrap ${
-                  centerTab === "schema"
-                    ? "bg-[#00ffa3] text-black font-bold"
-                    : "text-[#e4e6eb]/70 hover:text-white"
-                }`}
-              >
-                Schema &amp; Audit ({auditFindings.filter((f) => f.status === "open").length})
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={onSwitchToBrainMode}
-              className="px-3 py-1.5 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase tracking-wider text-[#00ffa3] flex items-center gap-1.5 whitespace-nowrap shrink-0"
-            >
-              <span>Inspect in 3D Brain</span>
-              <ExternalLink className="w-3 h-3" />
-            </button>
-          </div>
-
-          {/* ================================================================ */}
-          {/* TAB 1: AGENT COUNCIL & MISSION CONTROL                           */}
-          {/* ================================================================ */}
-          {centerTab === "council" && (
-            <div className="flex-1 flex flex-col min-h-0">
-              {/* Pinned Jarvis Executive Summary Card */}
-              <div className="shrink-0 mx-5 mt-4 p-3.5 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-[10px] text-[#00ffa3] font-mono uppercase tracking-wider">
-                    <span>JARVIS SUPERVISOR · EXECUTIVE SUMMARY</span>
-                    <span aria-hidden="true">·</span>
-                    <span>PHASE: {activeProject.current_phase.toUpperCase()}</span>
-                  </div>
-                  <p className="text-xs text-[#e4e6eb]/80">
-                    {activeProject.description}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 text-[11px] font-mono tabular-nums text-[#e4e6eb]/60 shrink-0">
-                  <span>
-                    Approved Gates:{" "}
-                    <strong className="text-[#00ffa3]">
-                      {projectArtifacts.filter((a) => a.status === "approved").length}/
-                      {projectArtifacts.length}
-                    </strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    ADRs: <strong className="text-white">{projectDecisions.length}</strong>
-                  </span>
-                </div>
-              </div>
-
-              {/* Council Stream */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-3 [scrollbar-width:thin] [scrollbar-color:rgba(228,230,235,0.2)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#e4e6eb]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#00ffa3]/60">
-                {projectMessages.map((msg) => {
-                  const isJarvis = msg.speaker_role === "jarvis";
-                  const isLibrarian = msg.speaker_role === "librarian";
-                  const isUser = msg.speaker_role === "user";
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`p-4 rounded-[2px] border ${
-                        isJarvis
-                          ? "bg-[#003322]/65 border-[#00ffa3]/60"
-                          : isLibrarian
-                          ? "bg-[#9d00ff]/[0.06] border-[#9d00ff]/50"
-                          : isUser
-                          ? "bg-black border-[#e4e6eb]/25"
-                          : "bg-white/[0.02] border-[#e4e6eb]/15"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider">
-                          <span
-                            className={`font-bold ${
-                              isJarvis
-                                ? "text-[#00ffa3]"
-                                : isLibrarian
-                                ? "text-[#c084fc]"
-                                : "text-[#e4e6eb]"
-                            }`}
-                          >
-                            {msg.speaker_name}
-                          </span>
-                          {msg.studio_name && (
-                            <>
-                              <span className="text-[#e4e6eb]/30" aria-hidden="true">
-                                ·
-                              </span>
-                              <span className="text-[#00ffa3]">{msg.studio_name}</span>
-                            </>
-                          )}
-                          {isJarvis && (
-                            <>
-                              <span className="text-[#e4e6eb]/30" aria-hidden="true">
-                                ·
-                              </span>
-                              <span className="text-[#00ffa3]">Governor &amp; Router</span>
-                            </>
-                          )}
-                          {isLibrarian && (
-                            <>
-                              <span className="text-[#e4e6eb]/30" aria-hidden="true">
-                                ·
-                              </span>
-                              <span className="text-[#c084fc]">Memory OS Gate</span>
-                            </>
-                          )}
-                        </div>
-                        <span className="text-[10px] font-mono tabular-nums text-[#e4e6eb]/50">
-                          {msg.timestamp}
-                        </span>
-                      </div>
-
-                      <p className="text-[13px] text-[#e4e6eb] leading-relaxed">
-                        {renderFormattedText(msg.content)}
-                      </p>
-
-                      {(msg.artifacts_produced?.length ||
-                        msg.decisions_logged?.length ||
-                        msg.wiki_ripples?.length) && (
-                        <div className="mt-3 pt-2.5 border-t border-[#e4e6eb]/15 flex flex-wrap items-center gap-3 text-[10px] font-mono text-[#e4e6eb]/60">
-                          {msg.artifacts_produced?.map((art) => (
-                            <button
-                              key={art}
-                              type="button"
-                              onClick={() => setCenterTab("artifacts")}
-                              className="text-[#00ffa3] hover:underline flex items-center gap-1"
-                            >
-                              <FileCheck2 className="w-3.5 h-3.5" />
-                              <span>[VIEW_ARTIFACT: {art}]</span>
-                            </button>
-                          ))}
-                          {msg.decisions_logged?.map((dec) => (
-                            <span key={dec} className="text-amber-300">
-                              Decision: {dec}
-                            </span>
-                          ))}
-                          {msg.wiki_ripples?.map((wp) => (
-                            <button
-                              key={wp}
-                              type="button"
-                              onClick={() => setCenterTab("wiki")}
-                              className="text-[#c084fc] hover:underline"
-                            >
-                              Wiki Ripple: {wp}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Jarvis Supervisor Command Input Bar */}
-              <form
-                onSubmit={handleRunJarvisOrchestration}
-                className="shrink-0 p-5 bg-[#0c0d0f] border-t-[1.5px] border-[#e4e6eb] space-y-3"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <label
-                      htmlFor="jarvis-studio-target"
-                      className="text-[10px] font-mono uppercase tracking-[0.14em] text-[#e4e6eb]/55"
-                    >
-                      Target Studio:
-                    </label>
-                    <select
-                      id="jarvis-studio-target"
-                      value={targetStudioOverride}
-                      onChange={(e) =>
-                        setTargetStudioOverride(e.target.value as "auto" | StudioSlug)
-                      }
-                      className="bg-black border border-[#e4e6eb]/20 rounded-[2px] px-2.5 py-1 text-[11px] font-mono text-[#00ffa3] outline-none focus:border-[#00ffa3]"
-                    >
-                      <option value="auto">
-                        AUTO ({activeProject.current_phase.toUpperCase()})
-                      </option>
-                      {studios.map((s) => (
-                        <option key={s.slug} value={s.slug}>
-                          {s.name} ({s.agent_name})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Quick Directives */}
-                  <div className="flex items-center gap-2 overflow-x-auto">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setJarvisDirective(
-                          "Generate OpenAPI 3.1 contract for /librarian/ingest and /brain/search endpoints"
-                        )
-                      }
-                      className="px-2.5 py-1 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase text-[#e4e6eb] whitespace-nowrap"
-                    >
-                      + OpenAPI
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setJarvisDirective(
-                          "Design NEM 3.0 solar + battery payback comparison UI component contract"
-                        )
-                      }
-                      className="px-2.5 py-1 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase text-[#e4e6eb] whitespace-nowrap"
-                    >
-                      + Design Spec
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setJarvisDirective(
-                          "Run SOC2 prompt-injection boundary & provenance claim audit"
-                        )
-                      }
-                      className="px-2.5 py-1 rounded-[2px] bg-transparent hover:bg-white/[0.05] border border-[#e4e6eb]/20 text-[10px] font-mono uppercase text-[#e4e6eb] whitespace-nowrap"
-                    >
-                      + QA Gate
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <input
-                    type="text"
-                    aria-label="Command Jarvis Supervisor"
-                    placeholder="CMD: System instruction (e.g., 'Design the satellite roof array wireframe spec')..."
-                    value={jarvisDirective}
-                    onChange={(e) => setJarvisDirective(e.target.value)}
-                    className="flex-1 p-3 rounded-[4px] bg-[#111] border-[1.5px] border-[#e4e6eb] text-xs font-mono text-white placeholder-[#e4e6eb]/40 outline-none focus:border-[#00ffa3]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={isOrchestrating}
-                    className="px-6 py-3 rounded-[2px] bg-[#00ffa3] hover:brightness-110 disabled:opacity-50 text-black font-extrabold text-[11px] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>{isOrchestrating ? "Orchestrating..." : "Dispatch"}</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {/* ================================================================ */}
-          {/* TAB 2: ARTIFACTS & QUALITY GATES                                 */}
-          {/* ================================================================ */}
-          {centerTab === "artifacts" && (
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden">
-              {/* Artifact List (5 cols) */}
-              <div className="lg:col-span-5 border-r border-[#e4e6eb]/15 overflow-y-auto divide-y divide-[#e4e6eb]/10">
-                {artifacts.map((art) => {
-                  const isSel = selectedArtifact?.id === art.id;
-                  return (
-                    <button
-                      key={art.id}
-                      type="button"
-                      onClick={() => setSelectedArtifactId(art.id)}
-                      className={`block w-full text-left p-4 transition-colors ${
-                        isSel
-                          ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
-                          : "hover:bg-white/[0.02]"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-mono text-[#00ffa3]">
-                          {art.artifact_type} · v{art.version}
-                        </span>
-                        <span
-                          className={`text-[10px] font-mono uppercase ${
-                            art.status === "approved"
-                              ? "text-[#00ffa3]"
-                              : art.status === "in_review"
-                              ? "text-amber-400"
-                              : "text-[#e4e6eb]/50"
-                          }`}
-                        >
-                          {art.status}
-                        </span>
-                      </div>
-                      <div className="text-sm font-semibold text-white mt-1">
-                        {art.title}
-                      </div>
-                      <p className="text-xs text-[#e4e6eb]/65 mt-1 line-clamp-2">
-                        {art.summary}
-                      </p>
-                      <div className="mt-2 flex items-center gap-2 text-[10px] font-mono tabular-nums text-[#e4e6eb]/50">
-                        <span>Studio: {art.studio_slug || "system"}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>sha256:{art.content_hash.slice(0, 10)}</span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Selected Artifact Inspector (7 cols) */}
-              {selectedArtifact && (
-                <div className="lg:col-span-7 p-5 overflow-y-auto space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#e4e6eb]/15">
-                    <div>
-                      <div className="text-xs font-mono text-[#00ffa3]">
-                        {selectedArtifact.storage_path}
-                      </div>
-                      <h3 className="text-lg font-bold text-white mt-1">
-                        {selectedArtifact.title}
-                      </h3>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-mono tabular-nums text-[#e4e6eb]/60">
-                        <span>Type: {selectedArtifact.artifact_type}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>Status: {selectedArtifact.status}</span>
-                        {selectedArtifact.approved_by && (
-                          <>
-                            <span aria-hidden="true">·</span>
-                            <span className="text-[#00ffa3]">
-                              Approved by {selectedArtifact.approved_by}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {selectedArtifact.status !== "approved" ? (
-                      <button
-                        type="button"
-                        onClick={() => handleApproveArtifact(selectedArtifact.id)}
-                        className="px-4 py-2 rounded-[2px] bg-[#00ffa3] hover:brightness-110 text-black font-extrabold text-[11px] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                      >
-                        <Check className="w-4 h-4" />
-                        <span>Approve Artifact (Unlock Gate)</span>
-                      </button>
-                    ) : (
-                      <span className="text-xs font-mono text-[#00ffa3] flex items-center gap-1">
-                        <ShieldCheck className="w-4 h-4" />
-                        <span>Gate Verified</span>
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="text-[11px] font-mono uppercase tracking-wider text-[#e4e6eb]/70">
-                      Artifact Markdown Specification
-                    </div>
-                    <pre className="p-4 rounded-[4px] bg-black border border-[#e4e6eb]/15 text-xs font-mono text-[#88edff] whitespace-pre-wrap leading-relaxed">
-                      {selectedArtifact.markdown_content}
-                    </pre>
-                  </div>
-
-                  {selectedArtifact.body && (
-                    <div className="space-y-2">
-                      <div className="text-[11px] font-mono uppercase tracking-wider text-[#e4e6eb]/70">
-                        Structured JSON Payload (`artifacts.body`)
-                      </div>
-                      <pre className="p-3.5 rounded-[4px] bg-black border border-[#e4e6eb]/15 text-xs font-mono text-[#00ffa3] whitespace-pre-wrap">
-                        {JSON.stringify(selectedArtifact.body, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ================================================================ */}
-          {/* TAB 3: LLM WIKI & PROVENANCE CLAIMS                              */}
-          {/* ================================================================ */}
-          {centerTab === "wiki" && (
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden">
-              {/* Left Wiki Catalog (5 cols) */}
-              <div className="lg:col-span-5 border-r border-[#e4e6eb]/15 flex flex-col min-h-0">
-                <div className="p-3.5 border-b border-[#e4e6eb]/15 flex items-center justify-between bg-black">
-                  <span className="text-[11px] font-mono uppercase tracking-wider text-[#e4e6eb]">
-                    Karpathy LLM Wiki (`brain/wiki/`)
-                  </span>
-                  <label className="flex items-center gap-1.5 text-[11px] font-mono text-[#e4e6eb]/75 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={onlyAgentVisibleWiki}
-                      onChange={(e) => setOnlyAgentVisibleWiki(e.target.checked)}
-                      className="rounded border-[#e4e6eb]/30"
-                    />
-                    <span>`agent_visible_wiki_pages` only</span>
-                  </label>
-                </div>
-
-                <div className="flex-1 overflow-y-auto divide-y divide-[#e4e6eb]/10">
-                  {displayedWikiPages.map((page) => {
-                    const visible = isWikiPageVisibleToAgents(page);
-                    const isSel = selectedWikiPage?.id === page.id;
-                    return (
-                      <button
-                        key={page.id}
-                        type="button"
-                        onClick={() => setSelectedWikiId(page.id)}
-                        className={`block w-full text-left p-3.5 transition-colors ${
-                          isSel
-                            ? "bg-white/[0.06] ring-1 ring-inset ring-[#00ffa3]/50"
-                            : "hover:bg-white/[0.02]"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
-                          <span className="text-[#00ffa3]">wiki/{page.path}</span>
-                          <span className={visible ? "text-[#00ffa3]" : "text-amber-400"}>
-                            {visible ? "Agent-Visible" : "Hidden (Needs Approval)"}
-                          </span>
-                        </div>
-                        <div className="text-sm font-semibold text-white mt-1">
-                          {page.title}
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 text-[10px] font-mono text-[#e4e6eb]/55">
-                          <span>Type: {page.page_type}</span>
-                          <span aria-hidden="true">·</span>
-                          <span>v{page.current_version}</span>
-                          <span aria-hidden="true">·</span>
-                          <span>Review: {page.review_state}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Right Wiki Page & Provenance Claims Viewer (7 cols) */}
-              {selectedWikiPage && (
-                <div className="lg:col-span-7 p-5 overflow-y-auto space-y-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[#e4e6eb]/15">
-                    <div>
-                      <div className="text-xs font-mono text-[#c084fc]">
-                        brain/wiki/{selectedWikiPage.path} · v{selectedWikiPage.current_version}
-                      </div>
-                      <h3 className="text-lg font-bold text-white mt-1">
-                        {selectedWikiPage.title}
-                      </h3>
-                      <p className="text-xs text-[#e4e6eb]/65 mt-1">
-                        {selectedWikiPage.summary}
-                      </p>
-                    </div>
-
-                    {selectedWikiPage.requires_approval &&
-                      selectedWikiPage.review_state !== "approved" && (
-                        <button
-                          type="button"
-                          onClick={() => handleApproveWikiPage(selectedWikiPage.id)}
-                          className="px-4 py-2 rounded-[2px] bg-[#00ffa3] hover:brightness-110 text-black font-extrabold text-[11px] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                        >
-                          <Unlock className="w-3.5 h-3.5" />
-                          <span>Approve Doctrine (Expose to Agents)</span>
-                        </button>
-                      )}
-                  </div>
-
-                  <pre className="p-4 rounded-[4px] bg-black border border-[#e4e6eb]/15 text-xs font-mono text-[#88edff] whitespace-pre-wrap leading-relaxed">
-                    {selectedWikiPage.markdown_body}
-                  </pre>
-
-                  {/* Provenance Claims Table */}
-                  <div className="space-y-2.5">
-                    <h4 className="text-xs font-mono uppercase tracking-wider text-white">
-                      Provenance Claims Ledger (`claims` Table — Zero Editorial Trap Guarantee)
-                    </h4>
-                    <div className="border border-[#e4e6eb]/15 rounded-[2px] overflow-hidden">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-black border-b border-[#e4e6eb]/15 text-[#e4e6eb]/60 font-mono text-[10px] uppercase">
-                            <th className="py-2 px-3">Verbatim Claim / Evidence</th>
-                            <th className="py-2 px-3">Provenance Ref</th>
-                            <th className="py-2 px-3 text-right">Confidence</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#e4e6eb]/10">
-                          {claims.map((c) => (
-                            <tr key={c.id} className="hover:bg-white/[0.02]">
-                              <td className="py-2.5 px-3 text-[#e4e6eb]">{c.claim_text}</td>
-                              <td className="py-2.5 px-3 font-mono text-[#00ffa3]">
-                                {c.source_id || c.artifact_id} ({c.locator})
-                              </td>
-                              <td className="py-2.5 px-3 font-mono tabular-nums text-right text-[#00ffa3]">
-                                {(c.confidence * 100).toFixed(0)}%
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ================================================================ */}
-          {/* TAB 4: SCHEMA, OUTBOX & AUDIT ENGINE                             */}
-          {/* ================================================================ */}
-          {centerTab === "schema" && (
-            <div className="flex-1 p-5 overflow-y-auto space-y-6">
-              {/* Audit Findings */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-white">
-                      Chief Librarian Health &amp; Drift Audit Findings (`audit_findings`)
-                    </h3>
-                    <p className="text-xs text-[#e4e6eb]/60">
-                      Detects conflicting architecture, unapproved doctrines, orphan pages, and stale claims.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {auditFindings.map((finding) => (
-                    <div
-                      key={finding.id}
-                      className="p-4 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 space-y-2"
-                    >
-                      <div className="flex items-center justify-between text-xs font-mono">
-                        <span className="text-amber-400">{finding.finding_type}</span>
-                        <span
-                          className={
-                            finding.status === "resolved"
-                              ? "text-[#00ffa3]"
-                              : "text-amber-300"
-                          }
-                        >
-                          {finding.status.toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="text-sm font-semibold text-white">
-                        {finding.object_title}
-                      </div>
-                      <p className="text-xs text-[#e4e6eb]/80">
-                        {finding.details.description}
-                      </p>
-                      <div className="text-[11px] font-mono text-[#00ffa3]">
-                        Fix: {finding.details.recommended_fix}
-                      </div>
-                      {finding.status === "open" && (
-                        <button
-                          type="button"
-                          onClick={() => void handleResolveAuditFinding(finding.id)}
-                          className="mt-2 px-3 py-1 rounded-[2px] bg-black border border-[#00ffa3] text-[10px] font-mono uppercase text-[#00ffa3]"
-                        >
-                          Mark Resolved
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Cycle-Safe Graph Neighbors Explorer */}
-              <div className="p-4 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h4 className="text-xs font-semibold text-white">
-                      PostgreSQL Recursive Graph Walk (`graph_neighbors(start_id, max_depth=2)`)
-                    </h4>
-                    <p className="text-[11px] text-[#e4e6eb]/60">
-                      Cycle-safe bidirectional traversal over the `relationships` table.
-                    </p>
-                  </div>
-                  <select
-                    aria-label="Select Graph Walk Start Node"
-                    value={neighborRootId}
-                    onChange={(e) => setNeighborRootId(e.target.value)}
-                    className="bg-black border border-[#e4e6eb]/20 rounded-[2px] px-2.5 py-1 text-xs text-[#00ffa3] font-mono"
-                  >
-                    <option value="proj-cortex-os">proj-cortex-os (CortexOS v1)</option>
-                    <option value="art-librarian-prd">art-librarian-prd (Librarian PRD)</option>
-                    <option value="proj-solar-crm">proj-solar-crm (Helios Solar CRM)</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {computedNeighbors.map((n, idx) => {
-                    const objId =
-                      "neighbor_id" in n
-                        ? (n as { neighbor_id: string; neighbor_label?: string }).neighbor_label ||
-                          (n as { neighbor_id: string }).neighbor_id
-                        : (n as { object_id: string }).object_id;
-                    return (
-                      <div
-                        key={`${objId}-${idx}`}
-                        className="px-3 py-1.5 rounded-[2px] bg-black border border-[#e4e6eb]/15 text-xs font-mono tabular-nums"
-                      >
-                        <span className="text-[#00ffa3]">{objId}</span>
-                        <span className="text-[#e4e6eb]/40 mx-1.5">·</span>
-                        <span className="text-[#e4e6eb]/80">depth={n.depth}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Transactional Outbox Events Table */}
-              <div className="space-y-2.5">
-                <h4 className="text-xs font-semibold text-white">
-                  Transactional Event Outbox (`events` Table — `FOR UPDATE SKIP LOCKED`)
-                </h4>
-                <div className="border border-[#e4e6eb]/15 rounded-[2px] overflow-hidden">
-                  <table className="w-full text-left border-collapse text-xs font-mono tabular-nums">
-                    <thead>
-                      <tr className="bg-black border-b border-[#e4e6eb]/15 text-[#e4e6eb]/60">
-                        <th className="py-2 px-3">ID</th>
-                        <th className="py-2 px-3">Event Type</th>
-                        <th className="py-2 px-3">Idempotency Key</th>
-                        <th className="py-2 px-3">Status</th>
-                        <th className="py-2 px-3 text-right">Attempts</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#e4e6eb]/10">
-                      {events.map((ev) => (
-                        <tr key={ev.id} className="hover:bg-white/[0.02]">
-                          <td className="py-2 px-3 text-[#e4e6eb]/50">#{ev.id}</td>
-                          <td className="py-2 px-3 text-[#00ffa3]">{ev.event_type}</td>
-                          <td className="py-2 px-3 text-[#e4e6eb]">{ev.idempotency_key}</td>
-                          <td className="py-2 px-3 text-[#00ffa3]">{ev.status}</td>
-                          <td className="py-2 px-3 text-right text-[#e4e6eb]/70">
-                            {ev.attempts}/{ev.max_attempts}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* ------------------------------------------------------------------ */}
-        {/* RIGHT PANEL: STUDIO WORKBENCH & ACTIVITY FEED                      */}
-        {/* ------------------------------------------------------------------ */}
-        {rightPanelMode !== "collapsed" && (
-          <aside
-            aria-label="Studio Workbench and Activity Panel"
-            className={`${
-              rightPanelMode === "detached"
-                ? "fixed right-5 top-28 bottom-6 w-[420px] z-40 rounded-[2px] shadow-2xl border border-[#00ffa3]"
-                : rightPanelMode === "wide"
-                ? "w-[420px]"
-                : "w-80"
-            } shrink-0 bg-[#0c0d0f] flex flex-col min-h-0 overflow-hidden`}
-          >
-            {/* Workbench Header with Studio Selector */}
-            <div className="p-4 border-b border-[#e4e6eb]/15 bg-white/[0.02] space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/55">
-                  STUDIO WORKBENCH
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRightPanelMode((m) => (m === "wide" ? "docked" : "wide"))
-                    }
-                    title="Resize Workbench Width"
-                    aria-label="Resize Workbench Width"
-                    className="p-1 rounded-[2px] bg-black border border-[#e4e6eb]/20 text-[#e4e6eb]/70 hover:text-white text-xs"
-                  >
-                    {rightPanelMode === "wide" ? (
-                      <Minimize2 className="w-3 h-3" />
-                    ) : (
-                      <Maximize2 className="w-3 h-3" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRightPanelMode((m) => (m === "detached" ? "docked" : "detached"))
-                    }
-                    className="px-2 py-0.5 rounded-[2px] bg-black border border-[#e4e6eb]/20 text-[10px] font-mono text-[#00ffa3] hover:text-white"
-                  >
-                    {rightPanelMode === "detached" ? "Dock" : "Detach"}
-                  </button>
-                </div>
-              </div>
-
-              <label htmlFor="workbench-studio-select" className="sr-only">
-                Select Studio Environment
-              </label>
-              <select
-                id="workbench-studio-select"
-                aria-label="Select Studio Environment"
-                value={selectedStudio.slug}
-                onChange={(e) => {
-                  setSelectedStudioSlug(e.target.value as StudioSlug);
-                  setEditingPackContent(null);
-                }}
-                className="w-full p-2.5 rounded-[2px] bg-black border-[1.5px] border-[#00ffa3] text-xs font-mono font-bold text-white uppercase outline-none"
-              >
-                {studios.map((s, idx) => (
-                  <option key={s.id} value={s.slug}>
-                    {idx + 1}. {s.name} ({s.agent_name})
-                  </option>
-                ))}
-              </select>
-
-              <div className="flex items-center justify-between text-[10px] font-mono text-[#e4e6eb]/50 tabular-nums">
-                <span>{selectedStudio.manifest_path}</span>
-                <span>sha256:{selectedStudio.manifest_hash.slice(0, 8)}</span>
-              </div>
-            </div>
-
-            {/* Studio Operating Environment Files */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-5 [scrollbar-width:thin] [scrollbar-color:rgba(228,230,235,0.2)_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[#e4e6eb]/20 hover:[&::-webkit-scrollbar-thumb]:bg-[#00ffa3]/60">
-              {/* File Tabs inside Studio Pack */}
-              <div className="space-y-2.5">
-                <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
-                  ACTIVE BUFFERS
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {(
-                    [
-                      ["agent_md", "AGENT.md"],
-                      ["mission_md", "mission.md"],
-                      ["rules_md", "rules.md"],
-                      ["constraints_md", "constraints.md"],
-                      ["knowledge_md", "knowledge.md"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => {
-                        setActivePackFile(key);
-                        setEditingPackContent(null);
-                      }}
-                      className={`px-2 py-1 rounded-[2px] text-[10px] font-mono transition-colors ${
-                        activePackFile === key
-                          ? "bg-[#00ffa3] text-black font-bold"
-                          : "bg-[#e4e6eb]/10 text-[#e4e6eb]/75 hover:text-white"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {editingPackContent !== null ? (
-                  <div className="space-y-2">
-                    <textarea
-                      rows={7}
-                      aria-label="Edit Studio Pack Markdown"
-                      value={editingPackContent}
-                      onChange={(e) => setEditingPackContent(e.target.value)}
-                      className="w-full p-2.5 rounded-[2px] bg-black border border-[#00ffa3] text-xs font-mono text-[#88edff] outline-none"
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditingPackContent(null)}
-                        className="px-2.5 py-1 text-xs font-mono text-[#e4e6eb]/60 hover:text-white"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveStudioPackFile}
-                        className="px-3 py-1 rounded-[2px] bg-[#00ffa3] text-black font-extrabold text-[10px] uppercase"
-                      >
-                        Save to Studio Pack
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="relative group">
-                    <pre className="p-3 rounded-[4px] bg-black border border-[#00ffa3]/60 text-[10px] font-mono text-[#88edff] whitespace-pre-wrap leading-relaxed">
-                      {selectedStudio.pack[activePackFile]}
-                    </pre>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEditingPackContent(selectedStudio.pack[activePackFile])
-                      }
-                      className="mt-1.5 text-[10px] font-mono text-[#00ffa3] hover:underline"
-                    >
-                      Edit {activePackFile.replace("_md", ".md")}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Studio Skills & Playbooks */}
-              <div className="space-y-2.5 pt-3 border-t border-[#e4e6eb]/10">
-                <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
-                  PLAYBOOKS
-                </div>
-                <div className="space-y-2">
-                  {selectedStudio.pack.skills.map((sk) => (
-                    <div
-                      key={sk.name}
-                      className="p-2.5 rounded-[2px] bg-white/[0.02] border border-[#e4e6eb]/15"
-                    >
-                      <div className="text-[10px] font-mono text-[#00ffa3]">
-                        skills/{sk.name}
-                      </div>
-                      <p className="text-[11px] text-[#e4e6eb]/75 mt-0.5">
-                        {sk.content.replace(/^#.*\n/, "")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Quality Gates */}
-              <div className="space-y-2 pt-3 border-t border-[#e4e6eb]/10">
-                <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
-                  QUALITY GATES
-                </div>
-                <ul className="space-y-1.5 text-[11px] text-[#e4e6eb]/85 font-mono">
-                  {selectedStudio.quality_checks.map((qc) => (
-                    <li key={qc} className="flex items-start gap-2">
-                      <span className="text-[#00ffa3] shrink-0">[✓]</span>
-                      <span>{qc}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Live WorkRequest Activity Feed */}
-              <div className="space-y-2 pt-3 border-t border-[#e4e6eb]/10">
-                <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[#e4e6eb]/50">
-                  LIVE WORKREQUEST QUEUE
-                </div>
-                <div className="space-y-2">
-                  {workRequests.map((wr) => (
-                    <div
-                      key={wr.id}
-                      className="p-2.5 rounded-[2px] bg-black border border-[#e4e6eb]/15 text-xs space-y-1"
-                    >
-                      <div className="flex items-center justify-between font-mono text-[10px]">
-                        <span className="text-[#00ffa3] uppercase">{wr.studio_slug}</span>
-                        <span
-                          className={
-                            wr.status === "done"
-                              ? "text-[#00ffa3]"
-                              : wr.status === "running"
-                              ? "text-[#88edff]"
-                              : "text-amber-400"
-                          }
-                        >
-                          {wr.status.toUpperCase()}
-                        </span>
-                      </div>
-                      <p className="text-[#e4e6eb]/85 text-[11px] line-clamp-2">{wr.objective}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </aside>
-        )}
-      </div>
+      <WarRoomWorkbenchShell renderPanel={renderLegacyAdaptedPanel} />
     </div>
   );
 }
+
